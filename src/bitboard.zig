@@ -3,6 +3,13 @@ const std = @import("std");
 const log = std.log;
 const IO = std.Io;
 
+const PieceList = "prkqbn";
+
+pub const ParseError = error{
+    InvalidCharacter,
+    InvalidNumber,
+};
+
 pub const BitBoard: type = struct {
     pawns: BoardPair,
     rooks: BoardPair,
@@ -11,6 +18,7 @@ pub const BitBoard: type = struct {
     queens: BoardPair,
     kings: BoardPair,
 
+    occupancyBoard: u64,
     attackBoard: u64,
     half_move: u16,
     full_move: u32,
@@ -18,7 +26,7 @@ pub const BitBoard: type = struct {
 
     active_color: Color,
 
-    pub fn from_fen(fen: []const u8) BitBoard {
+    pub fn from_fen(fen: []const u8) !BitBoard {
         var bb: BitBoard = undefined;
         log.debug("making bitboard from fen: {s}\n", .{fen});
 
@@ -34,7 +42,130 @@ pub const BitBoard: type = struct {
         bb.en_passant = Coord2d{ .x = 0, .y = 0 };
         bb.active_color = .white;
 
+        var x: u3 = 0;
+        var y: u3 = 0;
+        var current_idx = fen.len;
+        var last_char: bool = false;
+        for (fen, 0..) |char, i| {
+            if (is_in_string(PieceList, char_to_lower(char))) {
+                _ = bb.storeGeneral(.{ .x = 7 - x, .y = 7 - y }, Piece.decode(char));
+
+                if (last_char) {
+                    current_idx = i;
+                    break;
+                }
+                if (x < 7) {
+                    x += 1;
+                }
+            } else if (is_ascii_number(char)) {
+                var overflowed: u1 = 0;
+                const numb: u8 = char - 48;
+                if (numb > 8 or numb <= 0) {
+                    return ParseError.InvalidNumber;
+                }
+                if (numb == 8) {
+                    continue;
+                }
+
+                x, overflowed = @addWithOverflow(x, @as(u3, @intCast(numb)));
+                if (overflowed == 1) {
+                    return ParseError.InvalidNumber;
+                }
+            } else {
+                switch (char) {
+                    '/' => {
+                        if (last_char) {
+                            current_idx = i;
+                            break;
+                        }
+
+                        y += 1;
+                        x = 0;
+                    },
+                    ' ' => {
+                        current_idx = i;
+                        break;
+                    },
+                    else => {
+                        return ParseError.InvalidCharacter;
+                    },
+                }
+            }
+
+            if (y == 7 and x == 7) {
+                last_char = true;
+            }
+        }
+
         return bb;
+    }
+
+    // return true if smth was replaced
+    pub fn storeGeneral(bb: *BitBoard, src: Coord2d, piece: Piece) bool {
+        const mask = src.to_mask();
+        const removed = bb.occupancyBoard & mask != 0;
+
+        if (removed) {
+            bb.pawns.white &= ~mask;
+            bb.pawns.black &= ~mask;
+
+            bb.rooks.white &= ~mask;
+            bb.rooks.black &= ~mask;
+
+            bb.knights.white &= ~mask;
+            bb.knights.black &= ~mask;
+
+            bb.bishops.white &= ~mask;
+            bb.bishops.black &= ~mask;
+
+            bb.queens.white &= ~mask;
+            bb.queens.black &= ~mask;
+
+            bb.kings.white &= ~mask;
+            bb.kings.black &= ~mask;
+        }
+
+        switch (piece) {
+            .pawn => |pawn| {
+                switch (pawn) {
+                    .white => bb.pawns.white |= mask,
+                    .black => bb.pawns.black |= mask,
+                }
+            },
+            .rook => |rook| {
+                switch (rook) {
+                    .white => bb.rooks.white |= mask,
+                    .black => bb.rooks.black |= mask,
+                }
+            },
+            .knight => |knight| {
+                switch (knight) {
+                    .white => bb.knights.white |= mask,
+                    .black => bb.pawns.black |= mask,
+                }
+            },
+            .bishop => |bishop| {
+                switch (bishop) {
+                    .white => bb.bishops.white |= mask,
+                    .black => bb.bishops.black |= mask,
+                }
+            },
+            .queen => |queen| {
+                switch (queen) {
+                    .white => bb.queens.white |= mask,
+                    .black => bb.queens.black |= mask,
+                }
+            },
+            .king => |king| {
+                switch (king) {
+                    .white => bb.kings.white |= mask,
+                    .black => bb.kings.black |= mask,
+                }
+            },
+        }
+
+        bb.occupancyBoard |= mask;
+        return removed;
     }
 
     pub fn getGeneral(bb: *const BitBoard, src: Coord2d) Piece {
@@ -203,6 +334,11 @@ pub const BitBoard: type = struct {
             while (x >= 0) : (x -= 1) {
                 const c2d = Coord2d{ .x = x, .y = y };
                 if (bb.isEmptyGeneral(c2d)) {
+                    //if (c2d.to_mask() & bb.occupancyBoard != 0) {
+                    //    try print_board(bb.occupancyBoard, writer);
+                    //    std.debug.panic("occupancyBoard does not match other boards {d}\n", .{bb.occupancyBoard});
+                    //}
+
                     try writer.print(".", .{});
 
                     if (x == 0) {
@@ -231,10 +367,9 @@ const BoardPair: type = struct {
     black: u64,
 };
 
-pub const Color: type = enum(u2) {
+pub const Color: type = enum(u1) {
     white,
     black,
-    any,
     pub fn toggle(self: *Color) void {
         if (self == .white) {
             self.* = .black;
@@ -301,6 +436,28 @@ pub const Piece: type = union(enum) {
             },
         }
     }
+    pub fn decode(p: u8) Piece {
+        switch (p) {
+            'p' => return Piece{ .pawn = Color.black },
+            'P' => return Piece{ .pawn = Color.white },
+
+            'r' => return Piece{ .rook = Color.black },
+            'R' => return Piece{ .rook = Color.white },
+
+            'n' => return Piece{ .knight = Color.black },
+            'N' => return Piece{ .knight = Color.white },
+
+            'b' => return Piece{ .bishop = Color.black },
+            'B' => return Piece{ .bishop = Color.white },
+
+            'q' => return Piece{ .queen = Color.black },
+            'Q' => return Piece{ .queen = Color.white },
+
+            'k' => return Piece{ .king = Color.black },
+            'K' => return Piece{ .king = Color.white },
+            else => @panic("received invalid char to decode into piece"),
+        }
+    }
 };
 
 // 0,0 bottom right
@@ -313,7 +470,52 @@ pub const Coord2d: type = struct {
     }
 };
 
-// 0,0 bottom right
 fn coord_to_mask(x: u3, y: u3) u64 {
-    return 1 << (y * 8 + x);
+    return @as(u64, 1) << (@as(u6, y) * 8 + @as(u6, x));
+}
+
+fn char_to_lower(char: u8) u8 {
+    if (char >= 65 and char <= 90) {
+        return char + 32;
+    }
+    return char;
+}
+
+fn is_in_string(str: []const u8, needle: u8) bool {
+    for (str) |char| {
+        if (char == needle) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn is_ascii_number(char: u8) bool {
+    return (char >= 48) and (char <= 57);
+}
+
+pub fn print_board(board: u64, writer: *IO.Writer) !void {
+    try writer.print("-----Board------\n", .{});
+
+    var y: u3 = 7;
+    while (y >= 0) : (y -= 1) {
+        var x: u3 = 7;
+        while (x >= 0) : (x -= 1) {
+            const mask = coord_to_mask(x, y);
+            if ((board & mask) != 0) {
+                try writer.print("1", .{});
+            } else {
+                try writer.print("0", .{});
+            }
+
+            if (x == 0) {
+                break;
+            }
+        }
+        try writer.print("\n", .{});
+        if (y == 0) {
+            break;
+        }
+    }
+    try writer.flush();
 }

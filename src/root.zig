@@ -14,6 +14,6 @@ test "make form fen" {
     var w = std.fs.File.stdout().writer(&buf);
     const stdout = &w.interface;
 
-    var bb = board.BitBoard.from_fen(STARTING_FEN);
+    var bb = try board.BitBoard.from_fen(STARTING_FEN);
     try bb.print(stdout);
 }
