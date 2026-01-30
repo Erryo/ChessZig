@@ -10,10 +10,16 @@ pub fn make_move(bitboard: *board.BitBoard) void {
 }
 
 test "make form fen" {
+    //    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    //    defer arena.deinit();
+    //    var allocator = arena.allocator();
+    //
     var buf: [512]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
     const stdout = &w.interface;
 
     var bb = try board.BitBoard.from_fen(STARTING_FEN);
     try bb.print(stdout);
+
+    std.debug.print("generated FEN:{s}_EOL\n", .{bb.to_FEN()});
 }

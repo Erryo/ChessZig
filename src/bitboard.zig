@@ -2,6 +2,7 @@ const moveGen = @import("move_gen.zig");
 const std = @import("std");
 const log = std.log;
 const IO = std.Io;
+const Allocator = std.mem.Allocator;
 
 const PieceList = "prkqbn";
 
@@ -9,6 +10,10 @@ pub const ParseError = error{
     InvalidCharacter,
     InvalidNumber,
 };
+const castle_black_king: usize = 0;
+const castle_black_queen: usize = 1;
+const castle_white_king: usize = 2;
+const castle_white_queen: usize = 3;
 
 pub const BitBoard: type = struct {
     pawns: BoardPair,
@@ -20,15 +25,18 @@ pub const BitBoard: type = struct {
 
     occupancyBoard: u64,
     attackBoard: u64,
+
     half_move: u16,
     full_move: u32,
     en_passant: Coord2d,
+
+    castling_rights: [4]u1,
 
     active_color: Color,
 
     pub fn from_fen(fen: []const u8) !BitBoard {
         var bb: BitBoard = undefined;
-        log.debug("making bitboard from fen: {s}\n", .{fen});
+        std.debug.print("making bitboard from fen: {s}\n", .{fen});
 
         bb.pawns = BoardPair{ .white = 0, .black = 0 };
         bb.rooks = BoardPair{ .white = 0, .black = 0 };
@@ -36,9 +44,13 @@ pub const BitBoard: type = struct {
         bb.bishops = BoardPair{ .white = 0, .black = 0 };
         bb.queens = BoardPair{ .white = 0, .black = 0 };
         bb.kings = BoardPair{ .white = 0, .black = 0 };
+
+        bb.occupancyBoard = 0;
         bb.attackBoard = 0;
+
         bb.half_move = 0;
         bb.full_move = 1;
+        bb.castling_rights = std.mem.zeroes([4]u1);
         bb.en_passant = Coord2d{ .x = 0, .y = 0 };
         bb.active_color = .white;
 
@@ -48,7 +60,7 @@ pub const BitBoard: type = struct {
         var last_char: bool = false;
         for (fen, 0..) |char, i| {
             if (is_in_string(PieceList, char_to_lower(char))) {
-                _ = bb.storeGeneral(.{ .x = 7 - x, .y = 7 - y }, Piece.decode(char));
+                _ = bb.storeGeneral(.{ .x = x, .y = y }, Piece.decode(char));
 
                 if (last_char) {
                     current_idx = i;
@@ -96,6 +108,47 @@ pub const BitBoard: type = struct {
                 last_char = true;
             }
         }
+        std.debug.print("last char:{c}; prev:{c}\n", .{ fen[current_idx], fen[current_idx - 1] });
+
+        if (current_idx >= fen.len) {
+            return bb;
+        }
+
+        current_idx += 2;
+
+        if (fen[current_idx] == 'w') {
+            bb.active_color = Color.white;
+        } else if (fen[current_idx] == 'b') {
+            bb.active_color = Color.black;
+        }
+        current_idx += 2;
+
+        if (current_idx >= fen.len) {
+            return bb;
+        }
+
+        if (fen[current_idx] == '-') {
+            current_idx += 1;
+            bb.castling_rights = std.mem.zeroes([4]u1);
+        } else {
+            while (current_idx < fen.len) : (current_idx += 1) {
+                switch (fen[current_idx]) {
+                    'K' => bb.castling_rights[castle_white_king] = 1,
+                    'Q' => bb.castling_rights[castle_white_queen] = 1,
+                    'k' => bb.castling_rights[castle_black_king] = 1,
+                    'q' => bb.castling_rights[castle_black_queen] = 1,
+                    else => break,
+                }
+            }
+        }
+
+        if (current_idx > fen.len) {
+            return bb;
+        }
+
+        //at the space now
+
+        current_idx += 1;
 
         return bb;
     }
@@ -317,31 +370,31 @@ pub const BitBoard: type = struct {
 
     pub fn isEmptyGeneral(bb: *const BitBoard, src: Coord2d) bool {
         const mask = src.to_mask();
-        return ((bb.pawns.white | bb.pawns.black |
-            bb.rooks.white | bb.rooks.black |
-            bb.knights.white | bb.knights.black |
-            bb.bishops.white | bb.bishops.black |
-            bb.queens.white | bb.queens.black |
-            bb.kings.white | bb.kings.black) & mask) == 0;
+
+        return (bb.occupancyBoard & mask) == 0;
+        //return ((bb.pawns.white | bb.pawns.black |
+        //    bb.rooks.white | bb.rooks.black |
+        //    bb.knights.white | bb.knights.black |
+        //    bb.bishops.white | bb.bishops.black |
+        //    bb.queens.white | bb.queens.black |
+        //    bb.kings.white | bb.kings.black) & mask) == 0;
     }
 
     pub fn print(bb: *const BitBoard, writer: *IO.Writer) !void {
         try writer.print("-----Bitboard------\n", .{});
+        errdefer writer.flush() catch |err| {
+            std.debug.print("failed to flush with err:{any}\n", .{err});
+        };
 
-        var y: u3 = 7;
-        while (y >= 0) : (y -= 1) {
-            var x: u3 = 7;
-            while (x >= 0) : (x -= 1) {
+        var y: u3 = 0;
+        while (y <= 7) : (y += 1) {
+            var x: u3 = 0;
+            while (x <= 7) : (x += 1) {
                 const c2d = Coord2d{ .x = x, .y = y };
                 if (bb.isEmptyGeneral(c2d)) {
-                    //if (c2d.to_mask() & bb.occupancyBoard != 0) {
-                    //    try print_board(bb.occupancyBoard, writer);
-                    //    std.debug.panic("occupancyBoard does not match other boards {d}\n", .{bb.occupancyBoard});
-                    //}
-
                     try writer.print(".", .{});
 
-                    if (x == 0) {
+                    if (x == 7) {
                         break;
                     }
                     continue;
@@ -349,16 +402,93 @@ pub const BitBoard: type = struct {
                 const piece = bb.getGeneral(c2d);
                 try writer.print("{c}", .{piece.encode()});
 
-                if (x == 0) {
+                if (x == 7) {
                     break;
                 }
             }
             try writer.print("\n", .{});
-            if (y == 0) {
+            if (y == 7) {
                 break;
             }
         }
         try writer.flush();
+    }
+
+    pub fn to_FEN(bb: *const BitBoard) [200]u8 {
+        var fen: [200:0]u8 = [1:0]u8{' '} ** 200;
+        var idx_in_str: usize = 0;
+
+        var numb_empty: u8 = 0;
+        var y: u3 = 0;
+        while (y <= 7) : (y += 1) {
+            var x: u3 = 0;
+            while (x <= 7) : (x += 1) {
+                const c2d = Coord2d{ .x = x, .y = y };
+                if (bb.isEmptyGeneral(c2d)) {
+                    if (x == 7) {
+                        break;
+                    }
+                    numb_empty += 1;
+                    continue;
+                }
+                if (numb_empty != 0) {
+                    if (numb_empty > 9) {
+                        std.debug.panic("numb_empty is too big: {d}\n", .{numb_empty});
+                    }
+
+                    fen[idx_in_str] = numb_empty + 48;
+                    idx_in_str += 1;
+                    numb_empty = 0;
+                }
+                const piece = bb.getGeneral(c2d);
+                fen[idx_in_str] = piece.encode();
+
+                idx_in_str += 1;
+
+                if (x == 7) {
+                    break;
+                }
+            }
+            if (numb_empty != 0) {
+                fen[idx_in_str] = numb_empty + 49;
+                idx_in_str += 1;
+            }
+            numb_empty = 0;
+            if (y != 7) {
+                fen[idx_in_str] = '/';
+                idx_in_str += 1;
+            } else {
+                break;
+            }
+        }
+        idx_in_str += 1;
+
+        if (bb.active_color == Color.white) {
+            fen[idx_in_str] = 'w';
+        } else {
+            fen[idx_in_str] = 'b';
+        }
+
+        idx_in_str += 2;
+        if (bb.castling_rights[castle_white_king] == 1) {
+            fen[idx_in_str] = 'K';
+        }
+        if (bb.castling_rights[castle_white_queen] == 1) {
+            idx_in_str += 1;
+            fen[idx_in_str] = 'Q';
+        }
+        if (bb.castling_rights[castle_black_king] == 1) {
+            idx_in_str += 1;
+            fen[idx_in_str] = 'k';
+        }
+        if (bb.castling_rights[castle_black_queen] == 1) {
+            idx_in_str += 1;
+            fen[idx_in_str] = 'q';
+        }
+
+        idx_in_str += 1;
+
+        return fen;
     }
 };
 
