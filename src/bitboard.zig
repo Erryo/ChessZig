@@ -472,12 +472,52 @@ pub const BitBoard: type = struct {
         const mask = src.to_mask();
 
         return (bb.occupancyBoard & mask) == 0;
-        //return ((bb.pawns.white | bb.pawns.black |
-        //    bb.rooks.white | bb.rooks.black |
-        //    bb.knights.white | bb.knights.black |
-        //    bb.bishops.white | bb.bishops.black |
-        //    bb.queens.white | bb.queens.black |
-        //    bb.kings.white | bb.kings.black) & mask) == 0;
+    }
+
+    pub fn print_ansi(bb: *const BitBoard, writer: *IO.Writer) !void {
+        try writer.print("-----Bitboard (ANSI)------\n", .{});
+        errdefer writer.flush() catch |err| {
+            std.debug.print("failed to flush with err:{any}\n", .{err});
+        };
+
+        var y: u3 = 0;
+        while (y <= 7) : (y += 1) {
+            var x: u3 = 0;
+            while (x <= 7) : (x += 1) {
+                const c2d = Coord2d{ .x = x, .y = y };
+                const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;
+
+                // set background color
+                if (is_even) {
+                    try writer.print("\x1b[47m", .{}); // white square
+                } else {
+                    try writer.print("\x1b[40m", .{}); // black square
+                }
+
+                // print piece or empty square
+                if (bb.isEmptyGeneral(c2d)) {
+                    // empty square
+                    try writer.print("  ", .{}); // double-width for better aspect ratio
+                } else {
+                    const piece = bb.getGeneral(c2d);
+                    if (is_even) {
+                        // black foreground on white square
+                        try writer.print("\x1b[30m{c} ", .{piece.encode()});
+                    } else {
+                        // white foreground on black square
+                        try writer.print("\x1b[37m{c} ", .{piece.encode()});
+                    }
+                }
+
+                if (x == 7) break;
+            }
+
+            // reset color + newline
+            try writer.print("\x1b[0m\n", .{});
+            if (y == 7) break;
+        }
+
+        try writer.flush();
     }
 
     pub fn print(bb: *const BitBoard, writer: *IO.Writer) !void {
@@ -695,6 +735,28 @@ pub const Piece: type = union(enum) {
     queen: Color,
     king: Color,
 
+    pub fn getColor(piece: Piece) Color {
+        return switch (piece) {
+            .king => |king| king,
+            .queen => |queen| queen,
+            .rook => |rook| rook,
+            .bishop => |bishop| bishop,
+            .knight => |knight| knight,
+            .pawn => |pawn| pawn,
+        };
+    }
+
+    pub fn toUnicode(piece: Piece) []const u8 {
+        return switch (piece) {
+            .king => |king| if (king == Color.white) "♔" else "♚",
+            .queen => |queen| if (queen == Color.white) "♕" else "♛",
+            .rook => |rook| if (rook == Color.white) "♖" else "♜",
+            .bishop => |bishop| if (bishop == Color.white) "♗" else "♝",
+            .knight => |knight| if (knight == Color.white) "♘" else "♞",
+            .pawn => |pawn| if (pawn == Color.white) "♙" else "♟",
+        };
+    }
+
     // returns the piece name as a byte
     // it is upper case for white
     // lower case for black
@@ -834,29 +896,57 @@ pub fn print_board(board: u64, writer: *IO.Writer) !void {
     try writer.flush();
 }
 
-pub fn print_board_debug(board: u64) void {
-    std.debug.print("\n\n", .{});
-    defer std.debug.print("\n\n", .{});
+pub fn print_board_ansi(board: u64) void {
+    var w = std.fs.File.stdout().writer(&.{});
+    const out = &w.interface;
+
+    // Header
+    out.print(
+        "\n\n\x1b[42m\x1b[0m Chess Board \x1b[42m\x1b[0m\n",
+        .{},
+    ) catch {};
+
     var y: u3 = 0;
     while (y <= 7) : (y += 1) {
         var x: u3 = 0;
         while (x <= 7) : (x += 1) {
             const mask = coord_to_mask(x, y);
-            if ((board & mask) != 0) {
-                std.debug.print("+", .{});
+
+            const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;
+
+            if (is_even) {
+                // white square
+                out.print("\x1b[47m ", .{}) catch {};
+                if ((board & mask) != 0) {
+                    out.print("\x1b[30mX", .{}) catch {}; // black text
+                } else {
+                    out.print(" ", .{}) catch {};
+                }
             } else {
-                std.debug.print(".", .{});
+                // black square
+                out.print("\x1b[40m ", .{}) catch {};
+
+                if ((board & mask) != 0) {
+                    out.print("X", .{}) catch {}; // generic piece
+                } else {
+                    out.print(" ", .{}) catch {};
+                }
             }
 
             if (x == 7) {
                 break;
             }
         }
-        std.debug.print("\n", .{});
         if (y == 7) {
             break;
         }
+
+        // reset color + newline
+        out.print("\x1b[0m\n", .{}) catch {};
     }
+
+    // final safety reset
+    out.print("\x1b[0m", .{}) catch {};
 }
 
 pub fn file_to_coord(file: u8) u3 {

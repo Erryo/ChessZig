@@ -19,7 +19,7 @@ test "make form fen" {
     const stdout = &w.interface;
 
     var bb = try BB.BitBoard.from_fen(STARTING_FEN);
-    try bb.print(stdout);
+    try bb.print_ansi(stdout);
 
     std.debug.print("generated FEN:{s}_EOL\n", .{try bb.to_FEN()});
     try expect(bb.active_color == BB.Color.white);
