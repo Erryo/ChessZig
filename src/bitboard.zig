@@ -8,16 +8,14 @@ const Allocator = std.mem.Allocator;
 const PieceList = "prkqbn";
 
 pub const ParseError = error{
-    InvalidCharacter,
     InvalidNumber,
     BufferTooSmall,
+    FenIncomplete,
 };
 const castle_black_king: usize = 0;
 const castle_black_queen: usize = 1;
 const castle_white_king: usize = 2;
 const castle_white_queen: usize = 3;
-
-//var FileHashMap : std.AutoHashMap(u8, u3)
 
 pub const BitBoard: type = struct {
     pawns: BoardPair,
@@ -63,6 +61,7 @@ pub const BitBoard: type = struct {
         var current_idx = fen.len;
         var last_char: bool = false;
         for (fen, 0..) |char, i| {
+            //std.debug.print("loop at X:{d} Y:{d} \n", .{ x, y });
             if (is_in_string(PieceList, char_to_lower(char))) {
                 _ = bb.storeGeneral(.{ .x = x, .y = y }, Piece.decode(char));
 
@@ -70,6 +69,7 @@ pub const BitBoard: type = struct {
                     current_idx = i;
                     break;
                 }
+
                 if (x < 7) {
                     x += 1;
                 }
@@ -83,10 +83,15 @@ pub const BitBoard: type = struct {
                     continue;
                 }
 
-                x, overflowed = @addWithOverflow(x, @as(u3, @intCast(numb)));
+                const result, overflowed = @addWithOverflow(x, @as(u3, @intCast(numb)));
                 if (overflowed == 1) {
-                    return ParseError.InvalidNumber;
+                    std.debug.print("overflowed x:{d} when adding with :{d} as u3: {d}\n", .{ x, numb, @as(u3, @intCast(numb)) });
+                    if (result != 0) {
+                        return ParseError.InvalidNumber;
+                    }
                 }
+
+                x = result;
             } else {
                 switch (char) {
                     '/' => {
@@ -99,11 +104,11 @@ pub const BitBoard: type = struct {
                         x = 0;
                     },
                     ' ' => {
-                        current_idx = i;
+                        current_idx = i - 1;
                         break;
                     },
                     else => {
-                        return ParseError.InvalidCharacter;
+                        return ParseError.InvalidNumber;
                     },
                 }
             }
@@ -115,7 +120,7 @@ pub const BitBoard: type = struct {
         std.debug.print("last char:{c}; prev:{c}\n", .{ fen[current_idx], fen[current_idx - 1] });
 
         if (current_idx >= fen.len) {
-            return bb;
+            return ParseError.FenIncomplete;
         }
 
         current_idx += 2;
@@ -124,11 +129,13 @@ pub const BitBoard: type = struct {
             bb.active_color = Color.white;
         } else if (fen[current_idx] == 'b') {
             bb.active_color = Color.black;
+        } else {
+            return ParseError.InvalidNumber;
         }
         current_idx += 2;
 
         if (current_idx >= fen.len) {
-            return bb;
+            return ParseError.FenIncomplete;
         }
 
         if (fen[current_idx] == '-') {
@@ -162,7 +169,7 @@ pub const BitBoard: type = struct {
             if (file >= 97 and file <= 104) {
                 en_passant_x = file_to_coord(file);
             } else {
-                return bb;
+                return ParseError.InvalidNumber;
             }
 
             current_idx += 1;
@@ -171,7 +178,7 @@ pub const BitBoard: type = struct {
             if (rank >= 48 and rank <= 56) {
                 en_passant_y = @as(u3, @intCast(8 - (rank - 48))); // because a8 is (0,0) and is top left
             } else {
-                return bb;
+                return ParseError.InvalidNumber;
             }
             bb.en_passant = Coord2d{ .x = en_passant_x, .y = en_passant_y };
         }
@@ -181,9 +188,7 @@ pub const BitBoard: type = struct {
 
         var half_move: u8 = 0;
         var half_move_digit: u8 = fen[current_idx];
-        std.debug.print("half_move_digit: {d}\n", .{half_move_digit});
 
-        std.debug.print("current_idx:{d} , fen.len: {d}\n", .{ current_idx, fen.len });
         while (current_idx < fen.len) : (current_idx += 1) {
             half_move_digit = fen[current_idx];
             if (half_move_digit < 48 or half_move_digit > 57) {
@@ -198,7 +203,7 @@ pub const BitBoard: type = struct {
 
             const sub_res, const sub_overflow = @subWithOverflow(half_move_digit, 48);
             if (sub_overflow == 1) {
-                return bb;
+                return ParseError.InvalidNumber;
             }
             half_move += sub_res;
         }
@@ -207,7 +212,7 @@ pub const BitBoard: type = struct {
         current_idx += 1;
 
         if (current_idx >= fen.len) {
-            return bb;
+            return ParseError.FenIncomplete;
         }
 
         // full move
@@ -217,7 +222,7 @@ pub const BitBoard: type = struct {
         while (current_idx < fen.len) : (current_idx += 1) {
             full_move_digit = fen[current_idx];
             if (full_move_digit < 48 or full_move_digit > 57) {
-                break;
+                return ParseError.InvalidNumber;
             }
 
             const mul_res, const mul_overflow = @mulWithOverflow(full_move, 10);
@@ -229,7 +234,6 @@ pub const BitBoard: type = struct {
 
             const sub_res, const sub_overflow = @subWithOverflow(full_move_digit, 48);
             if (sub_overflow == 1) {
-                std.debug.print("subtracting in full_move overflowed with result {d} from {d} ", .{ sub_res, full_move_digit });
                 return ParseError.InvalidNumber;
             }
             full_move += sub_res;
@@ -453,6 +457,14 @@ pub const BitBoard: type = struct {
                     },
                 }
             },
+        }
+    }
+
+    pub fn isEnemy(bb: *const BitBoard, src: Coord2d) bool {
+        if (bb.active_color == Color.black) {
+            return ((bb.pawns.black | bb.rooks.black | bb.knights.black | bb.bishops.black | bb.queens.black | bb.kings.black) & src.to_mask()) != 0;
+        } else {
+            return ((bb.pawns.white | bb.rooks.white | bb.knights.white | bb.bishops.white | bb.queens.white | bb.kings.white) & src.to_mask()) != 0;
         }
     }
 
@@ -762,12 +774,18 @@ pub const Coord2d: type = struct {
     y: u3,
 
     pub fn to_mask(c2d: Coord2d) u64 {
-        return @as(u64, 1) << (@as(u6, c2d.y) * 8 + @as(u6, c2d.x));
+        return @as(u64, 1) << (@as(u6, 7 - c2d.y) * 8 + @as(u6, 7 - c2d.x));
     }
 };
 
+test "coord to mask " {
+    try expect(coord_to_mask(0, 0) == 1 << 63);
+    try expect(coord_to_mask(7, 0) == 1 << 63 - 7);
+    try expect(coord_to_mask(0, 7) == 1 << 7);
+    try expect(coord_to_mask(7, 7) == 1);
+}
 fn coord_to_mask(x: u3, y: u3) u64 {
-    return @as(u64, 1) << (@as(u6, y) * 8 + @as(u6, x));
+    return @as(u64, 1) << (@as(u6, 7 - y) * 8 + @as(u6, 7 - x));
 }
 
 fn char_to_lower(char: u8) u8 {
@@ -793,27 +811,52 @@ fn is_ascii_number(char: u8) bool {
 pub fn print_board(board: u64, writer: *IO.Writer) !void {
     try writer.print("-----Board------\n", .{});
 
-    var y: u3 = 7;
-    while (y >= 0) : (y -= 1) {
-        var x: u3 = 7;
-        while (x >= 0) : (x -= 1) {
+    var y: u3 = 0;
+    while (y <= 7) : (y += 1) {
+        var x: u3 = 0;
+        while (x <= 7) : (x += 1) {
             const mask = coord_to_mask(x, y);
             if ((board & mask) != 0) {
-                try writer.print("1", .{});
+                try writer.print("+", .{});
             } else {
-                try writer.print("0", .{});
+                try writer.print(".", .{});
             }
 
-            if (x == 0) {
+            if (x == 7) {
                 break;
             }
         }
         try writer.print("\n", .{});
-        if (y == 0) {
+        if (y == 7) {
             break;
         }
     }
     try writer.flush();
+}
+
+pub fn print_board_debug(board: u64) void {
+    std.debug.print("\n\n", .{});
+    defer std.debug.print("\n\n", .{});
+    var y: u3 = 0;
+    while (y <= 7) : (y += 1) {
+        var x: u3 = 0;
+        while (x <= 7) : (x += 1) {
+            const mask = coord_to_mask(x, y);
+            if ((board & mask) != 0) {
+                std.debug.print("+", .{});
+            } else {
+                std.debug.print(".", .{});
+            }
+
+            if (x == 7) {
+                break;
+            }
+        }
+        std.debug.print("\n", .{});
+        if (y == 7) {
+            break;
+        }
+    }
 }
 
 pub fn file_to_coord(file: u8) u3 {
@@ -835,4 +878,32 @@ test "file_to_coord" {
     try expect(file_to_coord('f') == 5);
     try expect(file_to_coord('g') == 6);
     try expect(file_to_coord('h') == 7);
+}
+
+test "fen to board invalid" {
+    const TestingBoard = struct {
+        fen: []const u8,
+        err: anyerror,
+    };
+    // mapping of invalid fen strings to expected errors
+    const test_cases = [_]TestingBoard{
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0", .err = ParseError.FenIncomplete },
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR x KQkq - 0 1", .err = ParseError.InvalidNumber },
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq X 0 1", .err = ParseError.InvalidNumber },
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 X", .err = ParseError.InvalidNumber },
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - X 1", .err = ParseError.InvalidNumber },
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 extra", .err = ParseError.InvalidNumber },
+        //i.fen=nvalid board positions
+        .{ .fen = "raou/eoue/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = ParseError.InvalidNumber },
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPZ/RNBQKBNR w KQkq - 0 1", .err = ParseError.InvalidNumber },
+        .{ .fen = "aoeuaoeu/aoeueaou/aoeu", .err = ParseError.InvalidNumber },
+    };
+
+    for (test_cases) |test_case| {
+        const fen = test_case.fen;
+        const expected_error = test_case.err;
+
+        const result = BitBoard.from_fen(fen);
+        try std.testing.expectError(expected_error, result);
+    }
 }
