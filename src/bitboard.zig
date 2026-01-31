@@ -2,6 +2,7 @@ const moveGen = @import("move_gen.zig");
 const std = @import("std");
 const log = std.log;
 const IO = std.Io;
+const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 
 const PieceList = "prkqbn";
@@ -9,11 +10,14 @@ const PieceList = "prkqbn";
 pub const ParseError = error{
     InvalidCharacter,
     InvalidNumber,
+    BufferTooSmall,
 };
 const castle_black_king: usize = 0;
 const castle_black_queen: usize = 1;
 const castle_white_king: usize = 2;
 const castle_white_queen: usize = 3;
+
+//var FileHashMap : std.AutoHashMap(u8, u3)
 
 pub const BitBoard: type = struct {
     pawns: BoardPair,
@@ -149,6 +153,90 @@ pub const BitBoard: type = struct {
         //at the space now
 
         current_idx += 1;
+
+        // en passant assume only one en_passnt at a 17:44
+
+        const file: u8 = fen[current_idx];
+        if (file != '-') {
+            var en_passant_x: u3 = undefined;
+            if (file >= 97 and file <= 104) {
+                en_passant_x = file_to_coord(file);
+            } else {
+                return bb;
+            }
+
+            current_idx += 1;
+            const rank: u8 = fen[current_idx];
+            var en_passant_y: u3 = undefined;
+            if (rank >= 48 and rank <= 56) {
+                en_passant_y = @as(u3, @intCast(8 - (rank - 48))); // because a8 is (0,0) and is top left
+            } else {
+                return bb;
+            }
+            bb.en_passant = Coord2d{ .x = en_passant_x, .y = en_passant_y };
+        }
+        current_idx += 2;
+
+        // half move
+
+        var half_move: u8 = 0;
+        var half_move_digit: u8 = fen[current_idx];
+        std.debug.print("half_move_digit: {d}\n", .{half_move_digit});
+
+        std.debug.print("current_idx:{d} , fen.len: {d}\n", .{ current_idx, fen.len });
+        while (current_idx < fen.len) : (current_idx += 1) {
+            half_move_digit = fen[current_idx];
+            if (half_move_digit < 48 or half_move_digit > 57) {
+                break;
+            }
+
+            const mul_res, const mul_overflow = @mulWithOverflow(half_move, 10);
+            if (mul_overflow == 1) {
+                return ParseError.InvalidNumber;
+            }
+            half_move = mul_res;
+
+            const sub_res, const sub_overflow = @subWithOverflow(half_move_digit, 48);
+            if (sub_overflow == 1) {
+                return bb;
+            }
+            half_move += sub_res;
+        }
+
+        bb.half_move = half_move;
+        current_idx += 1;
+
+        if (current_idx >= fen.len) {
+            return bb;
+        }
+
+        // full move
+        var full_move: u16 = 0;
+        var full_move_digit: u8 = fen[current_idx];
+
+        while (current_idx < fen.len) : (current_idx += 1) {
+            full_move_digit = fen[current_idx];
+            if (full_move_digit < 48 or full_move_digit > 57) {
+                break;
+            }
+
+            const mul_res, const mul_overflow = @mulWithOverflow(full_move, 10);
+            if (mul_overflow == 1) {
+                return ParseError.InvalidNumber;
+            }
+
+            full_move = mul_res;
+
+            const sub_res, const sub_overflow = @subWithOverflow(full_move_digit, 48);
+            if (sub_overflow == 1) {
+                std.debug.print("subtracting in full_move overflowed with result {d} from {d} ", .{ sub_res, full_move_digit });
+                return ParseError.InvalidNumber;
+            }
+            full_move += sub_res;
+        }
+        bb.full_move = full_move;
+
+        std.debug.print("half move: {d} full move:{d}\n", .{ half_move, full_move });
 
         return bb;
     }
@@ -414,7 +502,7 @@ pub const BitBoard: type = struct {
         try writer.flush();
     }
 
-    pub fn to_FEN(bb: *const BitBoard) [200]u8 {
+    pub fn to_FEN(bb: *const BitBoard) ![200]u8 {
         var fen: [200:0]u8 = [1:0]u8{' '} ** 200;
         var idx_in_str: usize = 0;
 
@@ -423,6 +511,9 @@ pub const BitBoard: type = struct {
         while (y <= 7) : (y += 1) {
             var x: u3 = 0;
             while (x <= 7) : (x += 1) {
+                if (idx_in_str >= fen.len) {
+                    return ParseError.BufferTooSmall;
+                }
                 const c2d = Coord2d{ .x = x, .y = y };
                 if (bb.isEmptyGeneral(c2d)) {
                     if (x == 7) {
@@ -463,6 +554,9 @@ pub const BitBoard: type = struct {
         }
         idx_in_str += 1;
 
+        if (idx_in_str >= fen.len) {
+            return ParseError.BufferTooSmall;
+        }
         if (bb.active_color == Color.white) {
             fen[idx_in_str] = 'w';
         } else {
@@ -470,23 +564,95 @@ pub const BitBoard: type = struct {
         }
 
         idx_in_str += 2;
+        if (idx_in_str >= fen.len) {
+            return ParseError.BufferTooSmall;
+        }
         if (bb.castling_rights[castle_white_king] == 1) {
             fen[idx_in_str] = 'K';
         }
         if (bb.castling_rights[castle_white_queen] == 1) {
             idx_in_str += 1;
+            if (idx_in_str >= fen.len) {
+                return ParseError.BufferTooSmall;
+            }
             fen[idx_in_str] = 'Q';
         }
         if (bb.castling_rights[castle_black_king] == 1) {
             idx_in_str += 1;
+            if (idx_in_str >= fen.len) {
+                return ParseError.BufferTooSmall;
+            }
             fen[idx_in_str] = 'k';
         }
         if (bb.castling_rights[castle_black_queen] == 1) {
             idx_in_str += 1;
+
+            if (idx_in_str >= fen.len) {
+                return ParseError.BufferTooSmall;
+            }
             fen[idx_in_str] = 'q';
         }
 
+        idx_in_str += 2;
+        if (idx_in_str >= fen.len) {
+            return ParseError.BufferTooSmall;
+        }
+
+        if (bb.en_passant.x == 0 and bb.en_passant.y == 0) {
+            fen[idx_in_str] = '-';
+        } else {
+            fen[idx_in_str] = @as(u8, bb.en_passant.x) + 97;
+            idx_in_str += 1;
+            if (idx_in_str >= fen.len) {
+                return ParseError.BufferTooSmall;
+            }
+            fen[idx_in_str] = (8 - @as(u8, bb.en_passant.y)) + 48;
+        }
+        idx_in_str += 2;
+
+        if (idx_in_str >= fen.len) {
+            return ParseError.BufferTooSmall;
+        }
+        var count_move_buf: [10]u8 = std.mem.zeroes([10]u8);
+        const printed_half_move: []u8 = std.fmt.bufPrint(count_move_buf[0..], "{d}", .{bb.half_move}) catch {
+            return ParseError.BufferTooSmall;
+        };
+        var buf_idx: usize = 0;
+
+        while (idx_in_str < fen.len) : (idx_in_str += 1) {
+            if (buf_idx >= printed_half_move.len) {
+                break;
+            }
+            fen[idx_in_str] = printed_half_move[buf_idx];
+            buf_idx += 1;
+        } else {
+            if (idx_in_str >= fen.len) {
+                return ParseError.BufferTooSmall;
+            }
+        }
+
         idx_in_str += 1;
+        if (idx_in_str >= fen.len) {
+            return ParseError.BufferTooSmall;
+        }
+
+        count_move_buf = std.mem.zeroes([10]u8);
+        const printed_full_move = std.fmt.bufPrint(count_move_buf[0..], "{d}", .{bb.full_move}) catch {
+            return ParseError.BufferTooSmall;
+        };
+        buf_idx = 0;
+
+        while (idx_in_str < fen.len) : (idx_in_str += 1) {
+            if (buf_idx >= printed_full_move.len) {
+                break;
+            }
+            fen[idx_in_str] = printed_full_move[buf_idx];
+            buf_idx += 1;
+        } else {
+            if (idx_in_str >= fen.len) {
+                return ParseError.BufferTooSmall;
+            }
+        }
 
         return fen;
     }
@@ -648,4 +814,25 @@ pub fn print_board(board: u64, writer: *IO.Writer) !void {
         }
     }
     try writer.flush();
+}
+
+pub fn file_to_coord(file: u8) u3 {
+    if (file >= 97 and file <= 104) {
+        const numb: u8 = file - 97;
+        return @as(u3, @intCast(numb));
+    }
+    return 0;
+    // a - 97
+    // 0 - 48
+}
+
+test "file_to_coord" {
+    try expect(file_to_coord('a') == 0);
+    try expect(file_to_coord('b') == 1);
+    try expect(file_to_coord('c') == 2);
+    try expect(file_to_coord('d') == 3);
+    try expect(file_to_coord('e') == 4);
+    try expect(file_to_coord('f') == 5);
+    try expect(file_to_coord('g') == 6);
+    try expect(file_to_coord('h') == 7);
 }
