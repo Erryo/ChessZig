@@ -1,6 +1,5 @@
 const BB = @import("bitboard.zig");
 const std = @import("std");
-const zbench = @import("zbench");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert();
 
@@ -42,7 +41,7 @@ pub const GenerationError = error{
 };
 
 pub const Move: type = struct {
-    src: BB.Coord2D,
+    src: BB.Coord2d,
     dst: BB.Coord2d,
 };
 
@@ -817,51 +816,4 @@ test "en passant capture" {
         return err;
     };
     std.debug.print("===Passed test:pawn en_passant \n", .{});
-}
-
-fn benchmark_pawn(allocator: Allocator) void {
-    var bb = BB.BitBoard.from_fen("rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq d3 0 1") catch return;
-    const src = BB.Coord2d{ .x = 3, .y = 4 };
-    const moves = generate_pawn_moves(&bb, src, allocator) catch return;
-
-    if (moves.quiets == 0) {
-        var w = std.fs.File.stdout().writer(&.{});
-        const writer = &w.interface;
-        bb.print_ansi(writer) catch {};
-    }
-    return;
-}
-
-test "pawn complicated" {
-    std.debug.print("Started test:pawn complicated  \n", .{});
-    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    benchmark_pawn(allocator);
-
-    std.debug.print("Passed test:pawn single and catpure \n", .{});
-}
-
-test "bench test pawn move gen" {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer std.testing.expect(debug_allocator.deinit() == .ok) catch {
-        std.debug.print("failde to deinit allocator; there maybe was a leak\n", .{});
-    };
-    const gpa = debug_allocator.allocator();
-
-    const buffer = try gpa.alloc(u8, 500);
-
-    var w = std.fs.File.stdout().writer(buffer);
-    const writer = &w.interface;
-
-    var bench = zbench.Benchmark.init(std.testing.allocator, .{ .hooks = .{ .after_each = &print_done } });
-    defer bench.deinit();
-    try bench.add("benchmark_pawn", benchmark_pawn, .{});
-
-    try bench.run(writer);
-}
-
-fn print_done() void {
-    std.debug.print("one iteration is done\n", .{});
 }

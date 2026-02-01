@@ -1,7 +1,6 @@
-const moveGen = @import("move_gen.zig");
-const std = @import("std");
 const log = std.log;
 const IO = std.Io;
+const std = @import("std");
 const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 
@@ -12,6 +11,7 @@ pub const ParseError = error{
     BufferTooSmall,
     FenIncomplete,
 };
+
 pub const castle_black_king: usize = 0;
 pub const castle_black_queen: usize = 1;
 pub const castle_white_king: usize = 2;
