@@ -12,10 +12,10 @@ pub const ParseError = error{
     BufferTooSmall,
     FenIncomplete,
 };
-const castle_black_king: usize = 0;
-const castle_black_queen: usize = 1;
-const castle_white_king: usize = 2;
-const castle_white_queen: usize = 3;
+pub const castle_black_king: usize = 0;
+pub const castle_black_queen: usize = 1;
+pub const castle_white_king: usize = 2;
+pub const castle_white_queen: usize = 3;
 
 pub const BitBoard: type = struct {
     pawns: BoardPair,
@@ -32,13 +32,13 @@ pub const BitBoard: type = struct {
     full_move: u32,
     en_passant: Coord2d,
 
-    castling_rights: [4]u1,
+    castling_rights: [4]bool,
 
     active_color: Color,
 
     pub fn from_fen(fen: []const u8) !BitBoard {
         var bb: BitBoard = undefined;
-        std.debug.print("making bitboard from fen: {s}\n", .{fen});
+        //        std.debug.print("making bitboard from fen: {s}\n", .{fen});
 
         bb.pawns = BoardPair{ .white = 0, .black = 0 };
         bb.rooks = BoardPair{ .white = 0, .black = 0 };
@@ -52,7 +52,7 @@ pub const BitBoard: type = struct {
 
         bb.half_move = 0;
         bb.full_move = 1;
-        bb.castling_rights = std.mem.zeroes([4]u1);
+        bb.castling_rights = std.mem.zeroes([4]bool);
         bb.en_passant = Coord2d{ .x = 0, .y = 0 };
         bb.active_color = .white;
 
@@ -85,7 +85,6 @@ pub const BitBoard: type = struct {
 
                 const result, overflowed = @addWithOverflow(x, @as(u3, @intCast(numb)));
                 if (overflowed == 1) {
-                    std.debug.print("overflowed x:{d} when adding with :{d} as u3: {d}\n", .{ x, numb, @as(u3, @intCast(numb)) });
                     if (result != 0) {
                         return ParseError.InvalidNumber;
                     }
@@ -117,7 +116,6 @@ pub const BitBoard: type = struct {
                 last_char = true;
             }
         }
-        std.debug.print("last char:{c}; prev:{c}\n", .{ fen[current_idx], fen[current_idx - 1] });
 
         if (current_idx >= fen.len) {
             return ParseError.FenIncomplete;
@@ -140,14 +138,14 @@ pub const BitBoard: type = struct {
 
         if (fen[current_idx] == '-') {
             current_idx += 1;
-            bb.castling_rights = std.mem.zeroes([4]u1);
+            bb.castling_rights = std.mem.zeroes([4]bool);
         } else {
             while (current_idx < fen.len) : (current_idx += 1) {
                 switch (fen[current_idx]) {
-                    'K' => bb.castling_rights[castle_white_king] = 1,
-                    'Q' => bb.castling_rights[castle_white_queen] = 1,
-                    'k' => bb.castling_rights[castle_black_king] = 1,
-                    'q' => bb.castling_rights[castle_black_queen] = 1,
+                    'K' => bb.castling_rights[castle_white_king] = true,
+                    'Q' => bb.castling_rights[castle_white_queen] = true,
+                    'k' => bb.castling_rights[castle_black_king] = true,
+                    'q' => bb.castling_rights[castle_black_queen] = true,
                     else => break,
                 }
             }
@@ -239,8 +237,6 @@ pub const BitBoard: type = struct {
             full_move += sub_res;
         }
         bb.full_move = full_move;
-
-        std.debug.print("half move: {d} full move:{d}\n", .{ half_move, full_move });
 
         return bb;
     }
@@ -460,8 +456,34 @@ pub const BitBoard: type = struct {
         }
     }
 
+    // return if a piece of the type is present at the given
+    // coordinate and belongs to active_color of board
+    pub fn isPieceAndOwn(bb: *const BitBoard, src: Coord2d, piece: Piece) bool {
+        const mask = src.to_mask();
+        switch (piece) {
+            .pawn => {
+                return (if (bb.active_color == Color.black) bb.pawns.black else bb.pawns.white) & mask != 0;
+            },
+            .rook => {
+                return (if (bb.active_color == Color.black) bb.rooks.black else bb.rooks.white) & mask != 0;
+            },
+            .knight => {
+                return (if (bb.active_color == Color.black) bb.knights.black else bb.knights.white) & mask != 0;
+            },
+            .bishop => {
+                return (if (bb.active_color == Color.black) bb.bishops.black else bb.bishops.white) & mask != 0;
+            },
+            .queen => {
+                return (if (bb.active_color == Color.black) bb.queens.black else bb.queens.white) & mask != 0;
+            },
+            .king => {
+                return (if (bb.active_color == Color.black) bb.kings.black else bb.kings.white) & mask != 0;
+            },
+        }
+    }
+
     pub fn isEnemy(bb: *const BitBoard, src: Coord2d) bool {
-        if (bb.active_color == Color.black) {
+        if (bb.active_color == Color.white) {
             return ((bb.pawns.black | bb.rooks.black | bb.knights.black | bb.bishops.black | bb.queens.black | bb.kings.black) & src.to_mask()) != 0;
         } else {
             return ((bb.pawns.white | bb.rooks.white | bb.knights.white | bb.bishops.white | bb.queens.white | bb.kings.white) & src.to_mask()) != 0;
@@ -475,36 +497,39 @@ pub const BitBoard: type = struct {
     }
 
     pub fn print_ansi(bb: *const BitBoard, writer: *IO.Writer) !void {
-        try writer.print("-----Bitboard (ANSI)------\n", .{});
+        try writer.print("-----Bitboard (ANSI)------\n\n", .{});
         errdefer writer.flush() catch |err| {
             std.debug.print("failed to flush with err:{any}\n", .{err});
         };
 
+        // Print ranks (8 to 1)
         var y: u3 = 0;
         while (y <= 7) : (y += 1) {
+            const rank: u8 = '8' - @as(u8, y);
+
+            // Rank label (left)
+            try writer.print(" {c} ", .{rank});
+
             var x: u3 = 0;
             while (x <= 7) : (x += 1) {
                 const c2d = Coord2d{ .x = x, .y = y };
                 const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;
 
-                // set background color
+                // Background
                 if (is_even) {
                     try writer.print("\x1b[47m", .{}); // white square
                 } else {
                     try writer.print("\x1b[40m", .{}); // black square
                 }
 
-                // print piece or empty square
+                // Content
                 if (bb.isEmptyGeneral(c2d)) {
-                    // empty square
-                    try writer.print("  ", .{}); // double-width for better aspect ratio
+                    try writer.print("  ", .{}); // empty square
                 } else {
                     const piece = bb.getGeneral(c2d);
                     if (is_even) {
-                        // black foreground on white square
                         try writer.print("\x1b[30m{c} ", .{piece.encode()});
                     } else {
-                        // white foreground on black square
                         try writer.print("\x1b[37m{c} ", .{piece.encode()});
                     }
                 }
@@ -512,10 +537,18 @@ pub const BitBoard: type = struct {
                 if (x == 7) break;
             }
 
-            // reset color + newline
+            // Reset colors and end line
             try writer.print("\x1b[0m\n", .{});
             if (y == 7) break;
         }
+
+        // File labels (bottom)
+        try writer.print("  ", .{}); // align under board
+        var file: u8 = 'a';
+        while (file <= 'h') : (file += 1) {
+            try writer.print(" {c}", .{file});
+        }
+        try writer.print("\n", .{});
 
         try writer.flush();
     }
@@ -619,24 +652,24 @@ pub const BitBoard: type = struct {
         if (idx_in_str >= fen.len) {
             return ParseError.BufferTooSmall;
         }
-        if (bb.castling_rights[castle_white_king] == 1) {
+        if (bb.castling_rights[castle_white_king]) {
             fen[idx_in_str] = 'K';
         }
-        if (bb.castling_rights[castle_white_queen] == 1) {
+        if (bb.castling_rights[castle_white_queen]) {
             idx_in_str += 1;
             if (idx_in_str >= fen.len) {
                 return ParseError.BufferTooSmall;
             }
             fen[idx_in_str] = 'Q';
         }
-        if (bb.castling_rights[castle_black_king] == 1) {
+        if (bb.castling_rights[castle_black_king]) {
             idx_in_str += 1;
             if (idx_in_str >= fen.len) {
                 return ParseError.BufferTooSmall;
             }
             fen[idx_in_str] = 'k';
         }
-        if (bb.castling_rights[castle_black_queen] == 1) {
+        if (bb.castling_rights[castle_black_queen]) {
             idx_in_str += 1;
 
             if (idx_in_str >= fen.len) {
@@ -846,7 +879,7 @@ test "coord to mask " {
     try expect(coord_to_mask(0, 7) == 1 << 7);
     try expect(coord_to_mask(7, 7) == 1);
 }
-fn coord_to_mask(x: u3, y: u3) u64 {
+pub fn coord_to_mask(x: u3, y: u3) u64 {
     return @as(u64, 1) << (@as(u6, 7 - y) * 8 + @as(u6, 7 - x));
 }
 
@@ -898,16 +931,20 @@ pub fn print_board(board: u64, writer: *IO.Writer) !void {
 
 pub fn print_board_ansi(board: u64) void {
     var w = std.fs.File.stdout().writer(&.{});
-    const out = &w.interface;
+    const writer = &w.interface;
 
     // Header
-    out.print(
-        "\n\n\x1b[42m\x1b[0m Chess Board \x1b[42m\x1b[0m\n",
+    writer.print(
+        "\n\n\x1b[42m\x1b[0m  Chess Board \x1b[42m\x1b[0m\n",
         .{},
     ) catch {};
-
     var y: u3 = 0;
     while (y <= 7) : (y += 1) {
+        const rank: u8 = '8' - @as(u8, y);
+
+        // Rank label (left)
+        writer.print(" {c} ", .{rank}) catch {};
+
         var x: u3 = 0;
         while (x <= 7) : (x += 1) {
             const mask = coord_to_mask(x, y);
@@ -915,21 +952,21 @@ pub fn print_board_ansi(board: u64) void {
             const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;
 
             if (is_even) {
-                // white square
-                out.print("\x1b[47m ", .{}) catch {};
+                // white square - reset text color too
+                writer.print("\x1b[47m\x1b[30m ", .{}) catch {}; // white bg, black text
                 if ((board & mask) != 0) {
-                    out.print("\x1b[30mX", .{}) catch {}; // black text
+                    writer.print("X", .{}) catch {};
                 } else {
-                    out.print(" ", .{}) catch {};
+                    writer.print(" ", .{}) catch {};
                 }
             } else {
-                // black square
-                out.print("\x1b[40m ", .{}) catch {};
+                // black square - reset to white text
+                writer.print("\x1b[40m\x1b[37m ", .{}) catch {}; // black bg, white text
 
                 if ((board & mask) != 0) {
-                    out.print("X", .{}) catch {}; // generic piece
+                    writer.print("X", .{}) catch {};
                 } else {
-                    out.print(" ", .{}) catch {};
+                    writer.print(" ", .{}) catch {};
                 }
             }
 
@@ -938,15 +975,23 @@ pub fn print_board_ansi(board: u64) void {
             }
         }
         if (y == 7) {
+            writer.print("\x1b[0m\n", .{}) catch {};
             break;
         }
 
         // reset color + newline
-        out.print("\x1b[0m\n", .{}) catch {};
+        writer.print("\x1b[0m\n", .{}) catch {};
     }
+    // File labels (bottom)
+    writer.print("  ", .{}) catch {}; // align under board
+    var file: u8 = 'a';
+    while (file <= 'h') : (file += 1) {
+        writer.print(" {c}", .{file}) catch {};
+    }
+    writer.print("\n", .{}) catch {};
 
     // final safety reset
-    out.print("\x1b[0m", .{}) catch {};
+    writer.print("\x1b[0m\n\n", .{}) catch {};
 }
 
 pub fn file_to_coord(file: u8) u3 {

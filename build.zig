@@ -20,6 +20,8 @@ pub fn build(b: *std.Build) void {
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
+    const opts = .{ .target = target, .optimize = optimize };
+    const zbench_module = b.dependency("zbench", opts).module("zbench");
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -82,6 +84,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.root_module.addImport("zbench", zbench_module);
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -122,6 +125,7 @@ pub fn build(b: *std.Build) void {
         .root_module = mod,
     });
 
+    mod_tests.root_module.addImport("zbench", zbench_module);
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
@@ -132,6 +136,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe.root_module,
     });
 
+    exe_tests.root_module.addImport("zbench", zbench_module);
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
