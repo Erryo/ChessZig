@@ -170,13 +170,6 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
             }
         },
         .pawn => {
-            bb.storePiece(&bb.pawns, move.src, move.piece);
-            if (undo.captured_piece) |piece| {
-                bb.storeGeneral(move.dst, piece);
-            } else {
-                bb.removeGeneral(move.dst);
-            }
-
             if (move.flag == .en_passant_capture) {
                 const coord_y, const overflowed = if (bb.active_color == .white)
                     @addWithOverflow(move.dst.y, 1)
@@ -187,7 +180,21 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
                     std.debug.panic("en passant captures overflowed, move not properly sanatized\n", .{});
                 }
 
-                bb.storeGeneral(.{ .x = move.dst.x, .y = coord_y }, undo.captured_piece);
+                bb.storePiece(&bb.pawns, move.src, move.piece);
+                bb.removeGeneral(move.dst);
+
+                if (undo.captured_piece) |piece| {
+                    bb.storeGeneral(.{ .x = move.dst.x, .y = coord_y }, piece);
+                } else {
+                    @panic("got empty piece for undoing en_passant_capture\n");
+                }
+            } else {
+                bb.storePiece(&bb.pawns, move.src, move.piece);
+                if (undo.captured_piece) |piece| {
+                    bb.storeGeneral(move.dst, piece);
+                } else {
+                    bb.removeGeneral(move.dst);
+                }
             }
         },
         .king => {
@@ -206,7 +213,11 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
 
                     bb.storePiece(&bb.kings, move.src, move.piece);
 
-                    bb.storeGeneral(7, move.src.y);
+                    if (undo.captured_piece) |piece| {
+                        bb.storeGeneral(.{ .x = 7, .y = move.src.y }, piece);
+                    } else {
+                        @panic("got empty piece");
+                    }
                 },
                 .queen_castle => {
                     bb.removeGeneral(.{ .x = 2, .y = move.src.y }); // clear king
@@ -214,7 +225,11 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
 
                     bb.storePiece(&bb.kings, move.src, move.piece);
 
-                    bb.storeGeneral(0, move.src.y);
+                    if (undo.captured_piece) |piece| {
+                        bb.storeGeneral(.{ .x = 0, .y = move.src.y }, piece);
+                    } else {
+                        @panic("got empty piece");
+                    }
                 },
                 else => {},
             }
@@ -376,4 +391,70 @@ test "make move e2e4" {
     };
 
     std.debug.print("===Passed test: make_move e2e4\n", .{});
+}
+test "make unmake e2e4" {
+    std.debug.print("Started test: make unmake e2e4\n", .{});
+
+    var bb = try BB.BitBoard.from_fen(BB.Starting_FEN);
+
+    var move = MoveGen.Move{
+        .undo = null,
+        .flag = .double_pawn_push,
+        .piece = .{ .kind = .pawn, .color = .white },
+        .src = .{ .x = 4, .y = 6 },
+        .dst = .{ .x = 4, .y = 4 },
+    };
+
+    make_move(&bb, &move);
+    unmake_move(&bb, &move);
+
+    std.testing.expect(!bb.isEmptyGeneral(.{ .x = 4, .y = 6 })) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(bb.isEmptyGeneral(.{ .x = 4, .y = 4 })) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(bb.en_passant.x == 0 and bb.en_passant.y == 0) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.debug.print("===Passed test: make unmake e2e4\n", .{});
+}
+
+test "unmake capture pawn" {
+    std.debug.print("Started test: unmake capture pawn\n", .{});
+
+    var bb = try BB.BitBoard.from_fen("rnbqkbnr/pppppppp/4P3/8/8/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+
+    var move = MoveGen.Move{
+        .undo = null,
+        .flag = .capture,
+        .piece = .{ .kind = .pawn, .color = .black },
+        .src = .{ .x = 5, .y = 1 },
+        .dst = .{ .x = 4, .y = 2 },
+    };
+
+    make_move(&bb, &move);
+    const piece = bb.getGeneral(.{ .x = 4, .y = 2 });
+
+    std.testing.expect(piece.color == .black) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    unmake_move(&bb, &move);
+
+    std.testing.expect(!bb.isEmptyGeneral(.{ .x = 5, .y = 1 })) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(!bb.isEmptyGeneral(.{ .x = 4, .y = 2 })) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.debug.print("===Passed test: unmake capture pawn\n", .{});
 }

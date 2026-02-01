@@ -267,16 +267,12 @@ pub const BitBoard: type = struct {
 
             bb.kings.white &= ~mask;
             bb.kings.black &= ~mask;
+            bb.occupancyBoard &= ~mask;
         }
-        bb.occupancyBoard &= ~mask;
     }
     pub fn storePiece(bb: *BitBoard, pair: *BoardPair, src: Coord2d, piece: Piece) void {
         const mask = src.to_mask();
-        if (piece.color == .white) {
-            pair.white |= mask;
-        } else {
-            pair.black |= mask;
-        }
+
         const removed = bb.occupancyBoard & mask != 0;
 
         if (removed) {
@@ -297,6 +293,11 @@ pub const BitBoard: type = struct {
 
             bb.kings.white &= ~mask;
             bb.kings.black &= ~mask;
+        }
+        if (piece.color == .white) {
+            pair.white |= mask;
+        } else {
+            pair.black |= mask;
         }
         bb.occupancyBoard |= mask;
     }
@@ -397,6 +398,9 @@ pub const BitBoard: type = struct {
         } else if ((bb.kings.black & src_mask) != 0) {
             return Piece{ .kind = .king, .color = Color.black };
         } else {
+            std.debug.print("empty at X{d} Y{d}, {s}\n", .{ src.x, src.y, src.to_algebraic() });
+            print_board_debug(bb.occupancyBoard);
+            std.debug.print("\n\n\n", .{});
             @panic("No piece at the given coordinate");
         }
     }
