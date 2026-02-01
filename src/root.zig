@@ -1,13 +1,17 @@
 //! By convention, root.zig is the root source file when making a library.
 const std = @import("std");
-pub const MoveGen = @import("move_gen.zig");
+pub const MoveGen = @import("moveGen.zig");
 pub const BB = @import("bitboard.zig");
+pub const Engine = @import("engine.zig");
 
 test {
     _ = MoveGen;
 }
 
-pub fn make_move(bb: *BB.BitBoard, move: MoveGen.Move) !void {
-    _ = bb;
-    _ = move;
+test {
+    _ = Engine;
+}
+
+test {
+    _ = BB;
 }

@@ -16,6 +16,7 @@ pub const castle_black_king: usize = 0;
 pub const castle_black_queen: usize = 1;
 pub const castle_white_king: usize = 2;
 pub const castle_white_queen: usize = 3;
+pub const Starting_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 pub const BitBoard: type = struct {
     pawns: BoardPair,
@@ -29,12 +30,14 @@ pub const BitBoard: type = struct {
     attackBoard: u64,
 
     half_move: u16,
-    full_move: u32,
+    full_move: u16,
     en_passant: Coord2d,
 
     castling_rights: [4]bool,
 
     active_color: Color,
+
+    game_state: GameState,
 
     pub fn from_fen(fen: []const u8) !BitBoard {
         var bb: BitBoard = undefined;
@@ -55,6 +58,7 @@ pub const BitBoard: type = struct {
         bb.castling_rights = std.mem.zeroes([4]bool);
         bb.en_passant = Coord2d{ .x = 0, .y = 0 };
         bb.active_color = .white;
+        bb.game_state = .going_on;
 
         var x: u3 = 0;
         var y: u3 = 0;
@@ -239,6 +243,58 @@ pub const BitBoard: type = struct {
         bb.full_move = full_move;
 
         return bb;
+    }
+
+    pub fn removeGeneral(bb: *BitBoard, src: Coord2d) void {
+        const mask = src.to_mask();
+        const removed = bb.occupancyBoard & mask != 0;
+
+        if (removed) {
+            bb.pawns.white &= ~mask;
+            bb.pawns.black &= ~mask;
+
+            bb.rooks.white &= ~mask;
+            bb.rooks.black &= ~mask;
+
+            bb.knights.white &= ~mask;
+            bb.knights.black &= ~mask;
+
+            bb.bishops.white &= ~mask;
+            bb.bishops.black &= ~mask;
+
+            bb.queens.white &= ~mask;
+            bb.queens.black &= ~mask;
+
+            bb.kings.white &= ~mask;
+            bb.kings.black &= ~mask;
+        }
+    }
+    pub fn storePiece(bb: *BitBoard, pair: *BoardPair, src: Coord2d, piece: Piece) void {
+        const mask = src.to_mask();
+        if (piece.getColor() == .white) {
+            pair.white |= mask;
+        }
+        const removed = bb.occupancyBoard & mask != 0;
+
+        if (removed) {
+            bb.pawns.white &= ~mask;
+            bb.pawns.black &= ~mask;
+
+            bb.rooks.white &= ~mask;
+            bb.rooks.black &= ~mask;
+
+            bb.knights.white &= ~mask;
+            bb.knights.black &= ~mask;
+
+            bb.bishops.white &= ~mask;
+            bb.bishops.black &= ~mask;
+
+            bb.queens.white &= ~mask;
+            bb.queens.black &= ~mask;
+
+            bb.kings.white &= ~mask;
+            bb.kings.black &= ~mask;
+        }
     }
 
     // return true if smth was replaced
@@ -496,6 +552,58 @@ pub const BitBoard: type = struct {
         return (bb.occupancyBoard & mask) == 0;
     }
 
+    pub fn print_ansi_debug(bb: *const BitBoard) void {
+        std.debug.print("-----Bitboard (ANSI)------\n\n", .{});
+
+        // Print ranks (8 to 1)
+        var y: u3 = 0;
+        while (y <= 7) : (y += 1) {
+            const rank: u8 = '8' - @as(u8, y);
+
+            // Rank label (left)
+            std.debug.print(" {c} ", .{rank});
+
+            var x: u3 = 0;
+            while (x <= 7) : (x += 1) {
+                const c2d = Coord2d{ .x = x, .y = y };
+                const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;
+
+                // Background
+                if (is_even) {
+                    std.debug.print("\x1b[47m", .{}); // white square
+                } else {
+                    std.debug.print("\x1b[40m", .{}); // black square
+                }
+
+                // Content
+                if (bb.isEmptyGeneral(c2d)) {
+                    std.debug.print("  ", .{}); // empty square
+                } else {
+                    const piece = bb.getGeneral(c2d);
+                    if (is_even) {
+                        std.debug.print("\x1b[30m{c} ", .{piece.encode()});
+                    } else {
+                        std.debug.print("\x1b[37m{c} ", .{piece.encode()});
+                    }
+                }
+
+                if (x == 7) break;
+            }
+
+            // Reset colors and end line
+            std.debug.print("\x1b[0m\n", .{});
+            if (y == 7) break;
+        }
+
+        // File labels (bottom)
+        std.debug.print("  ", .{}); // align under board
+        var file: u8 = 'a';
+        while (file <= 'h') : (file += 1) {
+            std.debug.print(" {c}", .{file});
+        }
+        std.debug.print("\n", .{});
+    }
+
     pub fn print_ansi(bb: *const BitBoard, writer: *IO.Writer) !void {
         try writer.print("-----Bitboard (ANSI)------\n\n", .{});
         errdefer writer.flush() catch |err| {
@@ -550,40 +658,6 @@ pub const BitBoard: type = struct {
         }
         try writer.print("\n", .{});
 
-        try writer.flush();
-    }
-
-    pub fn print(bb: *const BitBoard, writer: *IO.Writer) !void {
-        try writer.print("-----Bitboard------\n", .{});
-        errdefer writer.flush() catch |err| {
-            std.debug.print("failed to flush with err:{any}\n", .{err});
-        };
-
-        var y: u3 = 0;
-        while (y <= 7) : (y += 1) {
-            var x: u3 = 0;
-            while (x <= 7) : (x += 1) {
-                const c2d = Coord2d{ .x = x, .y = y };
-                if (bb.isEmptyGeneral(c2d)) {
-                    try writer.print(".", .{});
-
-                    if (x == 7) {
-                        break;
-                    }
-                    continue;
-                }
-                const piece = bb.getGeneral(c2d);
-                try writer.print("{c}", .{piece.encode()});
-
-                if (x == 7) {
-                    break;
-                }
-            }
-            try writer.print("\n", .{});
-            if (y == 7) {
-                break;
-            }
-        }
         try writer.flush();
     }
 
@@ -743,6 +817,14 @@ pub const BitBoard: type = struct {
     }
 };
 
+pub const GameState: type = enum(u3) {
+    going_on,
+    white_won,
+    black_won,
+    stalemate,
+    draw,
+};
+
 const BoardPair: type = struct {
     white: u64,
     black: u64,
@@ -871,6 +953,10 @@ pub const Coord2d: type = struct {
     pub fn to_mask(c2d: Coord2d) u64 {
         return @as(u64, 1) << (@as(u6, 7 - c2d.y) * 8 + @as(u6, 7 - c2d.x));
     }
+
+    pub fn to_algebraic(c2d: Coord2d) [2]u8 {
+        return [2]u8{ @as(u8, c2d.x) + 'a', @as(u8, 7 - c2d.y) + '1' };
+    }
 };
 
 test "coord to mask " {
@@ -903,47 +989,17 @@ fn is_ascii_number(char: u8) bool {
     return (char >= 48) and (char <= 57);
 }
 
-pub fn print_board(board: u64, writer: *IO.Writer) !void {
-    try writer.print("-----Board------\n", .{});
-
-    var y: u3 = 0;
-    while (y <= 7) : (y += 1) {
-        var x: u3 = 0;
-        while (x <= 7) : (x += 1) {
-            const mask = coord_to_mask(x, y);
-            if ((board & mask) != 0) {
-                try writer.print("+", .{});
-            } else {
-                try writer.print(".", .{});
-            }
-
-            if (x == 7) {
-                break;
-            }
-        }
-        try writer.print("\n", .{});
-        if (y == 7) {
-            break;
-        }
-    }
-    try writer.flush();
-}
-
-pub fn print_board_ansi(board: u64) void {
-    var w = std.fs.File.stdout().writer(&.{});
-    const writer = &w.interface;
-
-    // Header
-    writer.print(
+pub fn print_board_debug(board: u64) void {
+    std.debug.print(
         "\n\n\x1b[42m\x1b[0m  Chess Board \x1b[42m\x1b[0m\n",
         .{},
-    ) catch {};
+    );
     var y: u3 = 0;
     while (y <= 7) : (y += 1) {
         const rank: u8 = '8' - @as(u8, y);
 
         // Rank label (left)
-        writer.print(" {c} ", .{rank}) catch {};
+        std.debug.print(" {c} ", .{rank});
 
         var x: u3 = 0;
         while (x <= 7) : (x += 1) {
@@ -953,20 +1009,20 @@ pub fn print_board_ansi(board: u64) void {
 
             if (is_even) {
                 // white square - reset text color too
-                writer.print("\x1b[47m\x1b[30m ", .{}) catch {}; // white bg, black text
+                std.debug.print("\x1b[47m\x1b[30m ", .{}); // white bg, black text
                 if ((board & mask) != 0) {
-                    writer.print("X", .{}) catch {};
+                    std.debug.print("X", .{});
                 } else {
-                    writer.print(" ", .{}) catch {};
+                    std.debug.print(" ", .{});
                 }
             } else {
                 // black square - reset to white text
-                writer.print("\x1b[40m\x1b[37m ", .{}) catch {}; // black bg, white text
+                std.debug.print("\x1b[40m\x1b[37m ", .{}); // black bg, white text
 
                 if ((board & mask) != 0) {
-                    writer.print("X", .{}) catch {};
+                    std.debug.print("X", .{});
                 } else {
-                    writer.print(" ", .{}) catch {};
+                    std.debug.print(" ", .{});
                 }
             }
 
@@ -975,23 +1031,86 @@ pub fn print_board_ansi(board: u64) void {
             }
         }
         if (y == 7) {
-            writer.print("\x1b[0m\n", .{}) catch {};
+            std.debug.print("\x1b[0m\n", .{});
             break;
         }
 
         // reset color + newline
-        writer.print("\x1b[0m\n", .{}) catch {};
+        std.debug.print("\x1b[0m\n", .{});
     }
     // File labels (bottom)
-    writer.print("  ", .{}) catch {}; // align under board
+    std.debug.print("  ", .{}); // align under board
     var file: u8 = 'a';
     while (file <= 'h') : (file += 1) {
-        writer.print(" {c}", .{file}) catch {};
+        std.debug.print(" {c}", .{file});
     }
-    writer.print("\n", .{}) catch {};
+    std.debug.print("\n", .{});
 
     // final safety reset
-    writer.print("\x1b[0m\n\n", .{}) catch {};
+    std.debug.print("\x1b[0m\n\n", .{});
+}
+
+pub fn print_board(board: u64, writer: *std.Io.Writer) !void {
+
+    // Header
+    try writer.print(
+        "\n\n\x1b[42m\x1b[0m  Chess Board \x1b[42m\x1b[0m\n",
+        .{},
+    );
+    var y: u3 = 0;
+    while (y <= 7) : (y += 1) {
+        const rank: u8 = '8' - @as(u8, y);
+
+        // Rank label (left)
+        try writer.print(" {c} ", .{rank});
+
+        var x: u3 = 0;
+        while (x <= 7) : (x += 1) {
+            const mask = coord_to_mask(x, y);
+
+            const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;
+
+            if (is_even) {
+                // white square - reset text color too
+                try writer.print("\x1b[47m\x1b[30m ", .{}); // white bg, black text
+                if ((board & mask) != 0) {
+                    try writer.print("X", .{});
+                } else {
+                    try writer.print(" ", .{});
+                }
+            } else {
+                // black square - reset to white text
+                try writer.print("\x1b[40m\x1b[37m ", .{}); // black bg, white text
+
+                if ((board & mask) != 0) {
+                    try writer.print("X", .{});
+                } else {
+                    try writer.print(" ", .{});
+                }
+            }
+
+            if (x == 7) {
+                break;
+            }
+        }
+        if (y == 7) {
+            try writer.print("\x1b[0m\n", .{});
+            break;
+        }
+
+        // reset color + newline
+        try writer.print("\x1b[0m\n", .{});
+    }
+    // File labels (bottom)
+    try writer.print("  ", .{}); // align under board
+    var file: u8 = 'a';
+    while (file <= 'h') : (file += 1) {
+        try writer.print(" {c}", .{file});
+    }
+    try writer.print("\n", .{});
+
+    // final safety reset
+    try writer.print("\x1b[0m\n\n", .{});
 }
 
 pub fn file_to_coord(file: u8) u3 {

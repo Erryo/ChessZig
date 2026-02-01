@@ -1,0 +1,62 @@
+pub fn print_board_ansi(board: u64, writer: *std.Io.Writer) void {                                  
+                                                                                                    
+    // Header                                                                                       
+    try writer.print(                                                                                   
+        "\n\n\x1b[42m\x1b[0m  Chess Board \x1b[42m\x1b[0m\n",                                  
+        .{},                                                                                  
+    ) ;                                                                                     
+    var y: u3 = 0;                                                                                  
+    while (y <= 7) : (y += 1) {                                                                     
+        const rank: u8 = '8' - @as(u8, y);                                                          
+                                                                                                    
+        // Rank label (left)                                                                        
+        try writer.print(" {c} ", .{rank}) ;                                         
+                                                                                                    
+        var x: u3 = 0;                                                                              
+        while (x <= 7) : (x += 1) {                                                                 
+            const mask = coord_to_mask(x, y);                                            
+                                                                                                    
+            const is_even = ((@as(u4, x) + @as(u4, y)) & 1) == 0;                             
+                                                                                                    
+            if (is_even) {                                                                          
+                // white square - reset text color too                                              
+                try writer.print("\x1b[47m\x1b[30m ", .{}) ; // white bg, black text 
+                if ((board & mask) != 0) {                                                          
+                    try writer.print("X", .{}) ;                                     
+                } else {                                                                            
+                    try writer.print(" ", .{}) ;                                     
+                }                                                                                   
+            } else {                                                                                
+                // black square - reset to white text                                               
+                try writer.print("\x1b[40m\x1b[37m ", .{}) ; // black bg, white text 
+                                                                                                    
+                if ((board & mask) != 0) {                                                          
+                    try writer.print("X", .{}) ;                                     
+                } else {                                                                            
+                    try writer.print(" ", .{}) ;                                     
+                }                                                                                   
+            }                                                                                       
+                                                                                                    
+            if (x == 7) {                                                                           
+                break;                                                                              
+            }                                                                                       
+        }                                                                                           
+        if (y == 7) {                                                                               
+            try writer.print("\x1b[0m\n", .{}) ;                                     
+            break;                                                                                  
+        }                                                                                           
+                                                                                                    
+        // reset color + newline                                                                    
+        try writer.print("\x1b[0m\n", .{}) ;                                         
+    }                                                                                               
+    // File labels (bottom)                                                                         
+    try writer.print("  ", .{}) ; // align under board                               
+    var file: u8 = 'a';                                                                             
+    while (file <= 'h') : (file += 1) {                                                             
+        try writer.print(" {c}", .{file}) ;                                          
+    }                                                                                               
+    try writer.print("\n", .{}) ;                                                    
+                                                                                                    
+    // final safety reset                                                                           
+    try writer.print("\x1b[0m\n\n", .{}) ;                                           
+}                                                                                                   
