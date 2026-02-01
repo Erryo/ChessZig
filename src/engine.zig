@@ -4,27 +4,39 @@ const BB = @import("bitboard.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+pub const MakeUnmakeError = error{
+    UndoIsNull,
+};
+
 pub fn make_move_position(bb: *BB.BitBoard, move: *const MoveGen.Move) void {
     bb.en_passant = .{ .x = 0, .y = 0 };
-    switch (move.piece) {
+    switch (move.piece.kind) {
         .knight, .bishop, .queen => {
             bb.storeGeneral(move.dst, move.piece);
             bb.removeGeneral(move.src);
         },
         .pawn => {
-            bb.storePiece(bb.pawns, move.dst, move.piece);
+            bb.storePiece(&bb.pawns, move.dst, move.piece);
             bb.removeGeneral(move.src);
             switch (move.flag) {
                 .en_passant_capture => {
-                    const coord_y, const overflowed = if (bb.active_color == .white) @addWithOverflow(move.dst.y, 1) else @subWithOverflow(move.dst.y, 1);
-                    if (overflowed) {
+                    const coord_y, const overflowed = if (bb.active_color == .white)
+                        @addWithOverflow(move.dst.y, 1)
+                    else
+                        @subWithOverflow(move.dst.y, 1);
+
+                    if (overflowed == 1) {
                         std.debug.panic("en passant captures overflowed, move not properly sanatized\n", .{});
                     }
-                    bb.removeGeneral(.{ move.dst.x, coord_y });
+                    bb.removeGeneral(.{ .x = move.dst.x, .y = coord_y });
                 },
                 .double_pawn_push => {
-                    const coord_y, const overflowed = if (bb.active_color == .white) @addWithOverflow(move.dst.y, 1) else @subWithOverflow(move.dst.y, 1);
-                    if (overflowed) {
+                    const coord_y, const overflowed = if (bb.active_color == .white)
+                        @addWithOverflow(move.dst.y, 1)
+                    else
+                        @subWithOverflow(move.dst.y, 1);
+
+                    if (overflowed == 1) {
                         std.debug.panic("double_pawn_push overflowed, move not properly sanatized\n", .{});
                     }
 
@@ -32,7 +44,7 @@ pub fn make_move_position(bb: *BB.BitBoard, move: *const MoveGen.Move) void {
                 },
                 .bishop_promo_capture, .knight_promo_capture, .rook_promo_capture, .queen_promo_capture, .bishop_promotion, .knight_promotion, .rook_promotion, .queen_promotion => {
                     bb.removeGeneral(move.src);
-                    bb.storeGeneral(move.dst, move.flag.flag_to_promotion(bb.active_color));
+                    bb.storeGeneral(move.dst, move.flag.to_promotion_piece(bb.active_color));
                 },
                 else => {},
             }
@@ -40,23 +52,23 @@ pub fn make_move_position(bb: *BB.BitBoard, move: *const MoveGen.Move) void {
         .king => {
             switch (move.flag) {
                 .quiet, .capture => {
-                    bb.storePiece(bb.kings, move.dst, move.piece);
+                    bb.storePiece(&bb.kings, move.dst, move.piece);
                     bb.removeGeneral(move.src);
                 },
                 .king_castle => {
-                    bb.storePiece(bb.kings, .{ .x = 6, .y = move.src.y }, move.piece);
+                    bb.storePiece(&bb.kings, .{ .x = 6, .y = move.src.y }, move.piece);
                     bb.removeGeneral(move.src);
 
-                    const rookPiece = bb.getPiece(.{ .x = 7, .y = move.src.y }, .{ .rook = bb.active_color });
-                    bb.storePiece(bb.rooks, .{ .x = 5, .y = move.src.y }, rookPiece);
+                    const rookPiece = bb.getPiece(.{ .x = 7, .y = move.src.y }, .{ .kind = .rook, .color = bb.active_color });
+                    bb.storePiece(&bb.rooks, .{ .x = 5, .y = move.src.y }, rookPiece);
                     bb.removeGeneral(.{ .x = 7, .y = move.src.y });
                 },
                 .queen_castle => {
-                    bb.storePiece(bb.kings, .{ .x = 2, .y = move.src.y }, move.piece);
+                    bb.storePiece(&bb.kings, .{ .x = 2, .y = move.src.y }, move.piece);
                     bb.removeGeneral(move.src);
 
-                    const rookPiece = bb.getPiece(.{ .x = 0, .y = move.src.y }, .{ .rook = bb.active_color });
-                    bb.storePiece(bb.rooks, .{ .x = 3, .y = move.src.y }, rookPiece);
+                    const rookPiece = bb.getPiece(.{ .x = 0, .y = move.src.y }, .{ .kind = .rook, .color = bb.active_color });
+                    bb.storePiece(&bb.rooks, .{ .x = 3, .y = move.src.y }, rookPiece);
                     bb.removeGeneral(.{ .x = 0, .y = move.src.y });
                 },
                 else => {},
@@ -69,18 +81,18 @@ pub fn make_move_position(bb: *BB.BitBoard, move: *const MoveGen.Move) void {
                 bb.castling_rights[BB.castle_black_queen] = false;
             }
         },
-        .rook => |rook| {
-            bb.storePiece(bb.rooks, move.dst, move.piece);
+        .rook => {
+            bb.storePiece(&bb.rooks, move.dst, move.piece);
             bb.removeGeneral(move.src);
 
-            if (rook == .white) {
+            if (bb.active_color == .white) {
                 if (move.src.x == 0) {
                     bb.castling_rights[BB.castle_white_queen] = false;
                 } else {
                     bb.castling_rights[BB.castle_white_king] = false;
                 }
             }
-            if (rook == .black) {
+            if (bb.active_color == .black) {
                 if (move.src.x == 0) {
                     bb.castling_rights[BB.castle_black_queen] = false;
                 } else {
@@ -91,19 +103,128 @@ pub fn make_move_position(bb: *BB.BitBoard, move: *const MoveGen.Move) void {
     }
 }
 
-pub fn make_move(bb: *BB.BitBoard, move: *const MoveGen.Move) !void {
-    _ = bb;
-    _ = move;
+pub fn make_move(bb: *BB.BitBoard, move: *MoveGen.Move) void {
+    const undo = MoveGen.Undo{
+        .castling_rights = bb.castling_rights,
+        .en_passant = bb.en_passant,
+        .full_move = bb.full_move,
+        .half_move = bb.half_move,
+        .active_color = bb.active_color,
+        .captured_piece = if (bb.isEmptyGeneral(move.dst)) null else bb.getGeneral(move.dst),
+    };
+    move.undo = undo;
+
+    make_move_position(bb, move);
+
+    //  if active_color.no_legal_moves == 0
+
+    bb.half_move += 1;
+    if (move.flag == .capture or move.piece.kind == .pawn) {
+        bb.half_move = 0;
+    }
+
+    if (bb.active_color == .black) {
+        bb.full_move += 1;
+    }
+
+    if (bb.half_move >= 100) {
+        bb.game_state = .draw;
+    }
+
+    // three fold rep
+
+    // eval
+
+    bb.active_color.toggle();
 }
 
-pub fn unmake_move(bb: *BB.BitBoard, move: *const MoveGen.Move) !void {
-    _ = bb;
-    _ = move;
+pub fn unmake_move(bb: *BB.BitBoard, move: *MoveGen.Move) void {
+    if (move.undo) |undo| {
+        unmake_move_position(bb, move);
+        bb.game_state = .going_on;
+        bb.active_color = undo.active_color;
+
+        bb.castling_rights = undo.castling_rights;
+        bb.en_passant = undo.en_passant;
+
+        bb.half_move = undo.half_move;
+        bb.full_move = undo.full_move;
+    } else {
+        @panic("recieved null undo\n");
+    }
+}
+
+pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
+    if (move.undo == null) {
+        @panic("received in unmake pos  null undo");
+    }
+    const undo = &move.undo.?;
+
+    switch (move.piece.kind) {
+        .knight, .bishop, .queen, .rook => {
+            bb.storeGeneral(move.src, move.piece);
+            if (undo.captured_piece) |piece| {
+                bb.storeGeneral(move.dst, piece);
+            } else {
+                bb.removeGeneral(move.dst);
+            }
+        },
+        .pawn => {
+            bb.storePiece(&bb.pawns, move.src, move.piece);
+            if (undo.captured_piece) |piece| {
+                bb.storeGeneral(move.dst, piece);
+            } else {
+                bb.removeGeneral(move.dst);
+            }
+
+            if (move.flag == .en_passant_capture) {
+                const coord_y, const overflowed = if (bb.active_color == .white)
+                    @addWithOverflow(move.dst.y, 1)
+                else
+                    @subWithOverflow(move.dst.y, 1);
+
+                if (overflowed == 1) {
+                    std.debug.panic("en passant captures overflowed, move not properly sanatized\n", .{});
+                }
+
+                bb.storeGeneral(.{ .x = move.dst.x, .y = coord_y }, undo.captured_piece);
+            }
+        },
+        .king => {
+            switch (move.flag) {
+                .quiet, .capture => {
+                    bb.storePiece(&bb.kings, move.src, move.piece);
+                    if (undo.captured_piece) |piece| {
+                        bb.storeGeneral(move.dst, piece);
+                    } else {
+                        bb.removeGeneral(move.dst);
+                    }
+                },
+                .king_castle => {
+                    bb.removeGeneral(.{ .x = 6, .y = move.src.y }); // clear king
+                    bb.removeGeneral(.{ .x = 5, .y = move.src.y }); // clear rook
+
+                    bb.storePiece(&bb.kings, move.src, move.piece);
+
+                    bb.storeGeneral(7, move.src.y);
+                },
+                .queen_castle => {
+                    bb.removeGeneral(.{ .x = 2, .y = move.src.y }); // clear king
+                    bb.removeGeneral(.{ .x = 3, .y = move.src.y }); // clear rook
+
+                    bb.storePiece(&bb.kings, move.src, move.piece);
+
+                    bb.storeGeneral(0, move.src.y);
+                },
+                else => {},
+            }
+        },
+    }
 }
 
 pub fn pseudo_check(bb: *BB.BitBoard, move: MoveGen.Move, allocator: Allocator) !bool {
     var moveFn: *const fn (*const BB.BitBoard, BB.Coord2d, ?Allocator) MoveGen.GenerationError!MoveGen.MoveList = undefined;
-    switch (move.piece) {
+    switch (move.piece.kind) {
         .pawn => moveFn = MoveGen.generate_pawn_moves,
         .knight => moveFn = MoveGen.generate_knight_moves,
         .bishop => moveFn = MoveGen.generate_bishop_moves,
@@ -154,8 +275,9 @@ test "pseudo_check " {
     var bb = try BB.BitBoard.from_fen(BB.Starting_FEN);
 
     const move = MoveGen.Move{
+        .undo = null,
         .flag = .quiet,
-        .piece = .{ .knight = .white },
+        .piece = .{ .kind = .knight, .color = .white },
         .src = .{ .x = 1, .y = 7 },
         .dst = .{ .x = 2, .y = 5 },
     };
@@ -180,27 +302,31 @@ test "pseudo_check illegal moves " {
     var bb = try BB.BitBoard.from_fen(BB.Starting_FEN);
 
     const m1 = MoveGen.Move{
+        .undo = null,
         .flag = .quiet,
-        .piece = .{ .knight = .white },
+        .piece = .{ .kind = .knight, .color = .white },
         .src = BB.Coord2d{ .x = 1, .y = 7 },
         .dst = BB.Coord2d{ .x = 3, .y = 7 },
     };
 
     const m2 = MoveGen.Move{
         .flag = .quiet,
-        .piece = .{ .bishop = .white },
+        .piece = .{ .kind = .bishop, .color = .white },
         .src = BB.Coord2d{ .x = 2, .y = 7 },
         .dst = BB.Coord2d{ .x = 3, .y = 7 },
+        .undo = null,
     };
     const m3 = MoveGen.Move{
         .flag = .quiet,
-        .piece = .{ .pawn = .white },
+        .piece = .{ .kind = .pawn, .color = .white },
         .src = BB.Coord2d{ .x = 0, .y = 5 },
         .dst = BB.Coord2d{ .x = 0, .y = 6 },
+        .undo = null,
     };
     const m4 = MoveGen.Move{
+        .undo = null,
         .flag = .quiet,
-        .piece = .{ .king = .black },
+        .piece = .{ .kind = .king, .color = .black },
         .src = BB.Coord2d{ .x = 4, .y = 0 },
         .dst = BB.Coord2d{ .x = 4, .y = 1 },
     };
@@ -208,7 +334,7 @@ test "pseudo_check illegal moves " {
     const move_list = [_]MoveGen.Move{ m1, m2, m3, m4 };
 
     for (move_list) |move| {
-        bb.active_color = move.piece.getColor();
+        bb.active_color = move.piece.color;
 
         const result = try pseudo_check(&bb, move, allocator);
         std.testing.expect(result == false) catch |err| {
@@ -219,4 +345,35 @@ test "pseudo_check illegal moves " {
         };
     }
     std.debug.print("===Passed test:pseudo_check illegal moves\n", .{});
+}
+
+test "make move e2e4" {
+    std.debug.print("Started test: make_move e2e4\n", .{});
+
+    var bb = try BB.BitBoard.from_fen(BB.Starting_FEN);
+
+    var move = MoveGen.Move{
+        .undo = null,
+        .flag = .double_pawn_push,
+        .piece = .{ .kind = .pawn, .color = .white },
+        .src = .{ .x = 4, .y = 6 },
+        .dst = .{ .x = 4, .y = 4 },
+    };
+
+    make_move(&bb, &move);
+
+    std.testing.expect(!bb.isEmptyGeneral(.{ .x = 4, .y = 4 })) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(bb.isEmptyGeneral(.{ .x = 4, .y = 6 })) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(bb.en_passant.x == 4 and bb.en_passant.y == 5) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.debug.print("===Passed test: make_move e2e4\n", .{});
 }

@@ -268,11 +268,14 @@ pub const BitBoard: type = struct {
             bb.kings.white &= ~mask;
             bb.kings.black &= ~mask;
         }
+        bb.occupancyBoard &= ~mask;
     }
     pub fn storePiece(bb: *BitBoard, pair: *BoardPair, src: Coord2d, piece: Piece) void {
         const mask = src.to_mask();
-        if (piece.getColor() == .white) {
+        if (piece.color == .white) {
             pair.white |= mask;
+        } else {
+            pair.black |= mask;
         }
         const removed = bb.occupancyBoard & mask != 0;
 
@@ -295,10 +298,11 @@ pub const BitBoard: type = struct {
             bb.kings.white &= ~mask;
             bb.kings.black &= ~mask;
         }
+        bb.occupancyBoard |= mask;
     }
 
     // return true if smth was replaced
-    pub fn storeGeneral(bb: *BitBoard, src: Coord2d, piece: Piece) bool {
+    pub fn storeGeneral(bb: *BitBoard, src: Coord2d, piece: Piece) void {
         const mask = src.to_mask();
         const removed = bb.occupancyBoard & mask != 0;
 
@@ -321,40 +325,41 @@ pub const BitBoard: type = struct {
             bb.kings.white &= ~mask;
             bb.kings.black &= ~mask;
         }
+        bb.occupancyBoard |= mask;
 
-        switch (piece) {
-            .pawn => |pawn| {
-                switch (pawn) {
+        switch (piece.kind) {
+            .pawn => {
+                switch (piece.color) {
                     .white => bb.pawns.white |= mask,
                     .black => bb.pawns.black |= mask,
                 }
             },
-            .rook => |rook| {
-                switch (rook) {
+            .rook => {
+                switch (piece.color) {
                     .white => bb.rooks.white |= mask,
                     .black => bb.rooks.black |= mask,
                 }
             },
-            .knight => |knight| {
-                switch (knight) {
+            .knight => {
+                switch (piece.color) {
                     .white => bb.knights.white |= mask,
                     .black => bb.pawns.black |= mask,
                 }
             },
-            .bishop => |bishop| {
-                switch (bishop) {
+            .bishop => {
+                switch (piece.color) {
                     .white => bb.bishops.white |= mask,
                     .black => bb.bishops.black |= mask,
                 }
             },
-            .queen => |queen| {
-                switch (queen) {
+            .queen => {
+                switch (piece.color) {
                     .white => bb.queens.white |= mask,
                     .black => bb.queens.black |= mask,
                 }
             },
-            .king => |king| {
-                switch (king) {
+            .king => {
+                switch (piece.color) {
                     .white => bb.kings.white |= mask,
                     .black => bb.kings.black |= mask,
                 }
@@ -362,36 +367,35 @@ pub const BitBoard: type = struct {
         }
 
         bb.occupancyBoard |= mask;
-        return removed;
     }
 
     pub fn getGeneral(bb: *const BitBoard, src: Coord2d) Piece {
         const src_mask = src.to_mask();
 
         if ((bb.pawns.white & src_mask) != 0) {
-            return Piece{ .pawn = Color.white };
+            return Piece{ .kind = .pawn, .color = Color.white };
         } else if ((bb.rooks.white & src_mask) != 0) {
-            return Piece{ .rook = Color.white };
+            return Piece{ .kind = .rook, .color = Color.white };
         } else if ((bb.knights.white & src_mask) != 0) {
-            return Piece{ .knight = Color.white };
+            return Piece{ .kind = .knight, .color = Color.white };
         } else if ((bb.bishops.white & src_mask) != 0) {
-            return Piece{ .bishop = Color.white };
+            return Piece{ .kind = .bishop, .color = Color.white };
         } else if ((bb.queens.white & src_mask) != 0) {
-            return Piece{ .queen = Color.white };
+            return Piece{ .kind = .queen, .color = Color.white };
         } else if ((bb.kings.white & src_mask) != 0) {
-            return Piece{ .king = Color.white };
+            return Piece{ .kind = .king, .color = Color.white };
         } else if ((bb.pawns.black & src_mask) != 0) {
-            return Piece{ .pawn = Color.black };
+            return Piece{ .kind = .pawn, .color = Color.black };
         } else if ((bb.rooks.black & src_mask) != 0) {
-            return Piece{ .rook = Color.black };
+            return Piece{ .kind = .rook, .color = Color.black };
         } else if ((bb.knights.black & src_mask) != 0) {
-            return Piece{ .knight = Color.black };
+            return Piece{ .kind = .knight, .color = Color.black };
         } else if ((bb.bishops.black & src_mask) != 0) {
-            return Piece{ .bishop = Color.black };
+            return Piece{ .kind = .bishop, .color = Color.black };
         } else if ((bb.queens.black & src_mask) != 0) {
-            return Piece{ .queen = Color.black };
+            return Piece{ .kind = .queen, .color = Color.black };
         } else if ((bb.kings.black & src_mask) != 0) {
-            return Piece{ .king = Color.black };
+            return Piece{ .kind = .king, .color = Color.black };
         } else {
             @panic("No piece at the given coordinate");
         }
@@ -400,9 +404,9 @@ pub const BitBoard: type = struct {
     pub fn getPiece(bb: *const BitBoard, src: Coord2d, piece: Piece) Piece {
         const mask = src.to_mask();
 
-        switch (piece) {
-            .pawn => |pawn| {
-                switch (pawn) {
+        switch (piece.kind) {
+            .pawn => {
+                switch (piece.color) {
                     .white => {
                         if ((bb.pawns.white & mask) != 0) {
                             return piece;
@@ -419,8 +423,8 @@ pub const BitBoard: type = struct {
                     },
                 }
             },
-            .rook => |rook| {
-                switch (rook) {
+            .rook => {
+                switch (piece.color) {
                     .white => {
                         if ((bb.rooks.white & mask) != 0) {
                             return piece;
@@ -437,8 +441,8 @@ pub const BitBoard: type = struct {
                     },
                 }
             },
-            .knight => |knight| {
-                switch (knight) {
+            .knight => {
+                switch (piece.color) {
                     .white => {
                         if ((bb.knights.white & mask) != 0) {
                             return piece;
@@ -455,8 +459,8 @@ pub const BitBoard: type = struct {
                     },
                 }
             },
-            .bishop => |bishop| {
-                switch (bishop) {
+            .bishop => {
+                switch (piece.color) {
                     .white => {
                         if ((bb.bishops.white & mask) != 0) {
                             return piece;
@@ -473,8 +477,8 @@ pub const BitBoard: type = struct {
                     },
                 }
             },
-            .queen => |queen| {
-                switch (queen) {
+            .queen => {
+                switch (piece.color) {
                     .white => {
                         if ((bb.queens.white & mask) != 0) {
                             return piece;
@@ -491,8 +495,8 @@ pub const BitBoard: type = struct {
                     },
                 }
             },
-            .king => |king| {
-                switch (king) {
+            .king => {
+                switch (piece.color) {
                     .white => {
                         if ((bb.kings.white & mask) != 0) {
                             return piece;
@@ -516,7 +520,7 @@ pub const BitBoard: type = struct {
     // coordinate and belongs to active_color of board
     pub fn isPieceAndOwn(bb: *const BitBoard, src: Coord2d, piece: Piece) bool {
         const mask = src.to_mask();
-        switch (piece) {
+        switch (piece.kind) {
             .pawn => {
                 return (if (bb.active_color == Color.black) bb.pawns.black else bb.pawns.white) & mask != 0;
             },
@@ -834,41 +838,26 @@ pub const Color: type = enum(u1) {
     white,
     black,
     pub fn toggle(self: *Color) void {
-        if (self == .white) {
+        if (self.* == .white) {
             self.* = .black;
-        } else if (self == .black) {
+        } else if (self.* == .black) {
             self.* = .white;
         }
     }
 };
 
-pub const Piece: type = union(enum) {
-    pawn: Color,
-    rook: Color,
-    knight: Color,
-    bishop: Color,
-    queen: Color,
-    king: Color,
-
-    pub fn getColor(piece: Piece) Color {
-        return switch (piece) {
-            .king => |king| king,
-            .queen => |queen| queen,
-            .rook => |rook| rook,
-            .bishop => |bishop| bishop,
-            .knight => |knight| knight,
-            .pawn => |pawn| pawn,
-        };
-    }
+pub const Piece = struct {
+    kind: PieceKind,
+    color: Color,
 
     pub fn toUnicode(piece: Piece) []const u8 {
-        return switch (piece) {
-            .king => |king| if (king == Color.white) "♔" else "♚",
-            .queen => |queen| if (queen == Color.white) "♕" else "♛",
-            .rook => |rook| if (rook == Color.white) "♖" else "♜",
-            .bishop => |bishop| if (bishop == Color.white) "♗" else "♝",
-            .knight => |knight| if (knight == Color.white) "♘" else "♞",
-            .pawn => |pawn| if (pawn == Color.white) "♙" else "♟",
+        return switch (piece.kind) {
+            .king => if (piece.color == Color.white) "♔" else "♚",
+            .queen => if (piece.color == Color.white) "♕" else "♛",
+            .rook => if (piece.color == Color.white) "♖" else "♜",
+            .bishop => if (piece.color == Color.white) "♗" else "♝",
+            .knight => if (piece.color == Color.white) "♘" else "♞",
+            .pawn => if (piece.color == Color.white) "♙" else "♟",
         };
     }
 
@@ -876,44 +865,44 @@ pub const Piece: type = union(enum) {
     // it is upper case for white
     // lower case for black
     pub fn encode(p: Piece) u8 {
-        switch (p) {
-            .pawn => |pawn| {
-                if (pawn == .white) {
+        switch (p.kind) {
+            .pawn => {
+                if (p.color == .white) {
                     return 'P';
                 } else {
                     return 'p';
                 }
             },
-            .rook => |rook| {
-                if (rook == .white) {
+            .rook => {
+                if (p.color == .white) {
                     return 'R';
                 } else {
                     return 'r';
                 }
             },
-            .knight => |knight| {
-                if (knight == .white) {
+            .knight => {
+                if (p.color == .white) {
                     return 'N';
                 } else {
                     return 'n';
                 }
             },
-            .bishop => |bishop| {
-                if (bishop == .white) {
+            .bishop => {
+                if (p.color == .white) {
                     return 'B';
                 } else {
                     return 'b';
                 }
             },
-            .queen => |queen| {
-                if (queen == .white) {
+            .queen => {
+                if (p.color == .white) {
                     return 'Q';
                 } else {
                     return 'q';
                 }
             },
-            .king => |king| {
-                if (king == .white) {
+            .king => {
+                if (p.color == .white) {
                     return 'K';
                 } else {
                     return 'k';
@@ -923,26 +912,35 @@ pub const Piece: type = union(enum) {
     }
     pub fn decode(p: u8) Piece {
         switch (p) {
-            'p' => return Piece{ .pawn = Color.black },
-            'P' => return Piece{ .pawn = Color.white },
+            'p' => return Piece{ .kind = .pawn, .color = Color.black },
+            'P' => return Piece{ .kind = .pawn, .color = Color.white },
 
-            'r' => return Piece{ .rook = Color.black },
-            'R' => return Piece{ .rook = Color.white },
+            'r' => return Piece{ .kind = .rook, .color = Color.black },
+            'R' => return Piece{ .kind = .rook, .color = Color.white },
 
-            'n' => return Piece{ .knight = Color.black },
-            'N' => return Piece{ .knight = Color.white },
+            'n' => return Piece{ .kind = .knight, .color = Color.black },
+            'N' => return Piece{ .kind = .knight, .color = Color.white },
 
-            'b' => return Piece{ .bishop = Color.black },
-            'B' => return Piece{ .bishop = Color.white },
+            'b' => return Piece{ .kind = .bishop, .color = Color.black },
+            'B' => return Piece{ .kind = .bishop, .color = Color.white },
 
-            'q' => return Piece{ .queen = Color.black },
-            'Q' => return Piece{ .queen = Color.white },
+            'q' => return Piece{ .kind = .queen, .color = Color.black },
+            'Q' => return Piece{ .kind = .queen, .color = Color.white },
 
-            'k' => return Piece{ .king = Color.black },
-            'K' => return Piece{ .king = Color.white },
+            'k' => return Piece{ .kind = .king, .color = Color.black },
+            'K' => return Piece{ .kind = .king, .color = Color.white },
             else => @panic("received invalid char to decode into piece"),
         }
     }
+};
+
+pub const PieceKind: type = enum {
+    pawn,
+    rook,
+    knight,
+    bishop,
+    queen,
+    king,
 };
 
 // 0,0 bottom right

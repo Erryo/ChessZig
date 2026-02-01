@@ -40,22 +40,23 @@ pub const GenerationError = error{
     AllocationFailed,
 };
 
+pub const Move: type = struct {
+    src: BB.Coord2d,
+    dst: BB.Coord2d,
+    piece: BB.Piece,
+    flag: SpecialFlag,
+    undo: ?Undo,
+};
+
 pub const Undo = struct {
     active_color: BB.Color,
-    captured_piece: BB.Piece,
+    captured_piece: ?BB.Piece,
 
     en_passant: BB.Coord2d,
     castling_rights: [4]bool,
 
     half_move: u16,
     full_move: u16,
-};
-
-pub const Move: type = struct {
-    src: BB.Coord2d,
-    dst: BB.Coord2d,
-    piece: BB.Piece,
-    flag: SpecialFlag,
 };
 
 pub const MoveList: type = struct {
@@ -92,11 +93,11 @@ pub const SpecialFlag: type = enum(u4) {
     queen_promo_capture = 0b1111,
 
     pub fn to_promotion_piece(flag: *const SpecialFlag, color: BB.Color) BB.Piece {
-        switch (flag) {
-            .knight_promotion, .knight_promo_capture => return .{ .knight = color },
-            .bishop_promotion, .bishop_promo_capture => return .{ .bishop = color },
-            .rook_promotion, .rook_promo_capture => return .{ .rook = color },
-            .queen_promotion, .queen_promo_capture => return .{ .queen = color },
+        switch (flag.*) {
+            .knight_promotion, .knight_promo_capture => return .{ .kind = .knight, .color = color },
+            .bishop_promotion, .bishop_promo_capture => return .{ .kind = .bishop, .color = color },
+            .rook_promotion, .rook_promo_capture => return .{ .kind = .rook, .color = color },
+            .queen_promotion, .queen_promo_capture => return .{ .kind = .queen, .color = color },
             else => unreachable,
         }
     }
@@ -247,13 +248,21 @@ pub fn diagonal_moves(bb: *const BB.BitBoard, src: BB.Coord2d) struct { quiets: 
     while (idx <= 3) : (idx += 1) {
         var currentPosition = src;
         while (currentPosition.x >= 0 and currentPosition.x <= 7 and currentPosition.y >= 0 and currentPosition.y <= 7) {
-            const res_x, const x_overflow = if (DiagonalDeltas[idx][0] == true) @addWithOverflow(currentPosition.x, 1) else @subWithOverflow(currentPosition.x, 1);
-            const res_y, const y_overflow = if (DiagonalDeltas[idx][1] == true) @addWithOverflow(currentPosition.y, 1) else @subWithOverflow(currentPosition.y, 1);
+            const res_x, const x_overflow = if (DiagonalDeltas[idx][0] == true)
+                @addWithOverflow(currentPosition.x, 1)
+            else
+                @subWithOverflow(currentPosition.x, 1);
 
             if (x_overflow == 1) {
                 //std.debug.print("overflowed x:{d} with res:{d}\n", .{ currentPosition.x, res_x });
                 break;
             }
+
+            const res_y, const y_overflow = if (DiagonalDeltas[idx][1] == true)
+                @addWithOverflow(currentPosition.y, 1)
+            else
+                @subWithOverflow(currentPosition.y, 1);
+
             if (y_overflow == 1) {
                 //std.debug.print("overflowed y:{d} with res:{d}\n", .{ currentPosition.x, res_y });
                 break;
@@ -395,12 +404,20 @@ pub fn generate_knight_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Alloca
 
     for (KnightDeltas) |delta| {
         var currentPosition = src;
-        const x_res, const x_overflow = if (delta[0] > 0) @addWithOverflow(src.x, @as(u3, @intCast(delta[0]))) else @subWithOverflow(src.x, @as(u3, @intCast(-delta[0])));
-        const y_res, const y_overflow = if (delta[1] > 0) @addWithOverflow(src.y, @as(u3, @intCast(delta[1]))) else @subWithOverflow(src.y, @as(u3, @intCast(-delta[1])));
+        const x_res, const x_overflow = if (delta[0] > 0)
+            @addWithOverflow(src.x, @as(u3, @intCast(delta[0])))
+        else
+            @subWithOverflow(src.x, @as(u3, @intCast(-delta[0])));
 
         if (x_overflow == 1) {
             continue;
         }
+
+        const y_res, const y_overflow = if (delta[1] > 0)
+            @addWithOverflow(src.y, @as(u3, @intCast(delta[1])))
+        else
+            @subWithOverflow(src.y, @as(u3, @intCast(-delta[1])));
+
         if (y_overflow == 1) {
             continue;
         }
@@ -474,13 +491,21 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
 
     for (KingDeltas) |delta| {
         var currentPosition = src;
-        const x_res, const x_overflow = if (delta[0] >= 0) @addWithOverflow(src.x, @as(u3, @intCast(delta[0]))) else @subWithOverflow(src.x, @as(u3, @intCast(-delta[0])));
-        const y_res, const y_overflow = if (delta[1] >= 0) @addWithOverflow(src.y, @as(u3, @intCast(delta[1]))) else @subWithOverflow(src.y, @as(u3, @intCast(-delta[1])));
+        const x_res, const x_overflow = if (delta[0] >= 0)
+            @addWithOverflow(src.x, @as(u3, @intCast(delta[0])))
+        else
+            @subWithOverflow(src.x, @as(u3, @intCast(-delta[0])));
 
         if (x_overflow == 1) {
             //std.debug.print("overflowed x: delta x:{d} delta y:{d}\n", .{ delta[0], delta[1] });
             continue;
         }
+
+        const y_res, const y_overflow = if (delta[1] >= 0)
+            @addWithOverflow(src.y, @as(u3, @intCast(delta[1])))
+        else
+            @subWithOverflow(src.y, @as(u3, @intCast(-delta[1])));
+
         if (y_overflow == 1) {
             //std.debug.print("overflowed y: delta x:{d} delta y:{d}\n", .{ delta[0], delta[1] });
             continue;
@@ -503,7 +528,7 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
         .black => {
             if (bb.castling_rights[BB.castle_black_king]) {
                 const targetSquare = BB.Coord2d{ .x = 7, .y = src.y };
-                if (bb.isPieceAndOwn(targetSquare, .{ .rook = bb.active_color })) {
+                if (bb.isPieceAndOwn(targetSquare, .{ .kind = .rook, .color = bb.active_color })) {
                     const clearWay: bool = bb.isEmptyGeneral(.{ .x = 6, .y = src.y }) and bb.isEmptyGeneral(.{ .x = 5, .y = src.y });
 
                     if (clearWay) {
@@ -514,7 +539,7 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
             }
             if (bb.castling_rights[BB.castle_black_queen]) {
                 const targetSquare = BB.Coord2d{ .x = 0, .y = src.y };
-                if (bb.isPieceAndOwn(targetSquare, .{ .rook = bb.active_color })) {
+                if (bb.isPieceAndOwn(targetSquare, .{ .kind = .rook, .color = bb.active_color })) {
                     const clearWay: bool = bb.isEmptyGeneral(.{ .x = 3, .y = src.y }) and
                         bb.isEmptyGeneral(.{ .x = 2, .y = src.y }) and bb.isEmptyGeneral(.{ .x = 1, .y = src.y });
 
@@ -528,7 +553,7 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
         .white => {
             if (bb.castling_rights[BB.castle_white_king]) {
                 const targetSquare = BB.Coord2d{ .x = 7, .y = src.y };
-                if (bb.isPieceAndOwn(targetSquare, .{ .rook = bb.active_color })) {
+                if (bb.isPieceAndOwn(targetSquare, .{ .kind = .rook, .color = bb.active_color })) {
                     const clearWay: bool = bb.isEmptyGeneral(.{ .x = 6, .y = src.y }) and bb.isEmptyGeneral(.{ .x = 5, .y = src.y });
 
                     if (clearWay) {
@@ -539,7 +564,7 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
             }
             if (bb.castling_rights[BB.castle_white_queen]) {
                 const targetSquare = BB.Coord2d{ .x = 0, .y = src.y };
-                if (bb.isPieceAndOwn(targetSquare, .{ .rook = bb.active_color })) {
+                if (bb.isPieceAndOwn(targetSquare, .{ .kind = .rook, .color = bb.active_color })) {
                     std.debug.print("passed rook presence check\n", .{});
                     const clearWay: bool = bb.isEmptyGeneral(.{ .x = 3, .y = src.y }) and
                         bb.isEmptyGeneral(.{ .x = 2, .y = src.y }) and bb.isEmptyGeneral(.{ .x = 1, .y = src.y });
