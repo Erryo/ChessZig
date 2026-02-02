@@ -40,12 +40,119 @@ pub const GenerationError = error{
     AllocationFailed,
 };
 
+pub const ParsingError = error{
+    InvalidLength,
+    InvalidCoordinate,
+    InvalidCharacter,
+};
+
 pub const Move: type = struct {
     src: BB.Coord2d,
     dst: BB.Coord2d,
     piece: BB.Piece,
     flag: SpecialFlag,
     undo: ?Undo,
+
+    pub fn from_UCI(bb: *const BB.BitBoard, uci: []const u8) ParsingError!Move {
+        if (uci.len != 5 and uci.len != 4)
+            return ParsingError.InvalidLength;
+
+        if (!(uci[1] >= '1' and uci[1] <= '8'))
+            return ParsingError.InvalidCoordinate;
+
+        if (!(uci[3] >= '1' and uci[3] <= '8'))
+            return ParsingError.InvalidCoordinate;
+
+        if (!(uci[0] >= 'a' and uci[0] <= 'h'))
+            return ParsingError.InvalidCoordinate;
+
+        if (!(uci[2] >= 'a' and uci[2] <= 'h'))
+            return ParsingError.InvalidCoordinate;
+
+        const src: BB.Coord2d = .{ .x = @intCast(uci[0] - 'a'), .y = 7 - @as(u3, @intCast(uci[1] - '1')) };
+        const dst: BB.Coord2d = .{ .x = @intCast(uci[2] - 'a'), .y = 7 - @as(u3, @intCast(uci[3] - '1')) };
+
+        if (bb.isEmptyGeneral(src)) return ParsingError.InvalidCoordinate;
+
+        const piece: BB.Piece = bb.getGeneral(src);
+        const flag: SpecialFlag = try Move.generate_flag(bb, src, dst, piece, uci);
+
+        return .{
+            .src = src,
+            .dst = dst,
+            .piece = piece,
+            .flag = flag,
+            .undo = null,
+        };
+    }
+
+    fn generate_flag(bb: *const BB.BitBoard, src: BB.Coord2d, dst: BB.Coord2d, piece: BB.Piece, uci: []const u8) ParsingError!SpecialFlag {
+        if (uci.len == 5) {
+            switch (uci[4]) {
+                'r', 'R' => return SpecialFlag.rook_promotion,
+                'b', 'B' => return SpecialFlag.bishop_promotion,
+                'n', 'N' => return SpecialFlag.knight_promotion,
+
+                'q',
+                'Q',
+                => return SpecialFlag.queen_promotion,
+                else => return ParsingError.InvalidCharacter,
+            }
+        }
+
+        if (piece.kind == .king and bb.isPieceAndOwn(dst, .{ .color = piece.color, .kind = .rook })) {
+            if (src.y != dst.y) return ParsingError.InvalidCoordinate;
+
+            if (dst.x == 0) {
+                return SpecialFlag.queen_castle;
+            } else if (dst.x == 7) {
+                return SpecialFlag.king_castle;
+            } else return ParsingError.InvalidCoordinate;
+        }
+
+        if (piece.kind == .pawn) {
+            const home_row: u3 = if (piece.color == .white) 6 else 1;
+            const going_down: bool = if (piece.color == .white) false else true;
+
+            // double_pawn_push
+            if (src.y == home_row) {
+                const doublePushY, const overflow = if (going_down) @addWithOverflow(src.y, 2) else @subWithOverflow(src.y, 2);
+                if (overflow == 1) return ParsingError.InvalidCoordinate;
+
+                if (doublePushY == dst.x) return SpecialFlag.double_pawn_push;
+            }
+
+            if (bb.isEmptyGeneral(dst)) {
+                const ep_capture_y, const overflow_y = if (going_down) @addWithOverflow(src.y, 1) else @subWithOverflow(src.y, 1);
+                //if (overflow_y) return ParsingError.InvalidCoordinate;
+                if (overflow_y == 0) {
+                    // left
+                    const x_left, const overflow_left = @subWithOverflow(src.x, 1);
+                    if (overflow_left == 0) {
+                        if (dst.x == x_left and dst.y == ep_capture_y) {
+                            if (bb.isEnemy(.{ .x = dst.x, .y = src.y })) {
+                                return SpecialFlag.en_passant_capture;
+                            }
+                        }
+                    }
+
+                    // right
+                    const x_right, const overflow_right = @addWithOverflow(src.x, 1);
+                    if (overflow_right == 0) {
+                        if (dst.x == x_right and dst.y == ep_capture_y) {
+                            if (bb.isEnemy(.{ .x = dst.x, .y = src.y })) {
+                                return SpecialFlag.en_passant_capture;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!bb.isEmptyGeneral(dst)) return SpecialFlag.capture;
+
+        return SpecialFlag.quiet;
+    }
 };
 
 pub const Undo = struct {
@@ -72,32 +179,23 @@ pub const SpecialMove: type = struct {
 };
 
 pub const SpecialFlag: type = enum(u4) {
-    quiet = 0b0000,
-
-    double_pawn_push = 0b0001,
-
-    king_castle = 0b0010,
-    queen_castle = 0b0011,
-
-    capture = 0b0100,
-    en_passant_capture = 0b0101,
-
-    knight_promotion = 0b1000,
-    bishop_promotion = 0b1001,
-    rook_promotion = 0b1010,
-    queen_promotion = 0b1011,
-
-    knight_promo_capture = 0b1100,
-    bishop_promo_capture = 0b1101,
-    rook_promo_capture = 0b1110,
-    queen_promo_capture = 0b1111,
+    quiet,
+    double_pawn_push,
+    king_castle,
+    queen_castle,
+    capture,
+    en_passant_capture,
+    knight_promotion,
+    bishop_promotion,
+    rook_promotion,
+    queen_promotion,
 
     pub fn to_promotion_piece(flag: *const SpecialFlag, color: BB.Color) BB.Piece {
         switch (flag.*) {
-            .knight_promotion, .knight_promo_capture => return .{ .kind = .knight, .color = color },
-            .bishop_promotion, .bishop_promo_capture => return .{ .kind = .bishop, .color = color },
-            .rook_promotion, .rook_promo_capture => return .{ .kind = .rook, .color = color },
-            .queen_promotion, .queen_promo_capture => return .{ .kind = .queen, .color = color },
+            .knight_promotion => return .{ .kind = .knight, .color = color },
+            .bishop_promotion => return .{ .kind = .bishop, .color = color },
+            .rook_promotion => return .{ .kind = .rook, .color = color },
+            .queen_promotion => return .{ .kind = .queen, .color = color },
             else => unreachable,
         }
     }
@@ -180,9 +278,6 @@ pub fn axis_aligned_ray_move(bb: *const BB.BitBoard, src: BB.Coord2d) struct { q
 
 test "rook moves" {
     std.debug.print("Starting test:rook moves\n", .{});
-    // gen a fen where rook can move
-    // gen his move
-    // check if they are not zero
     var bb = try BB.BitBoard.from_fen("8/8/8/3r4/8/8/8/8 w - - 0 1");
     const src = BB.Coord2d{ .x = 3, .y = 3 };
     const moves = axis_aligned_ray_move(&bb, src);
@@ -418,7 +513,7 @@ pub fn generate_knight_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Alloca
         else
             @subWithOverflow(src.y, @as(u3, @intCast(-delta[1])));
 
-        if (y_overflow == 1) {
+        if (y_overflow == 2) {
             continue;
         }
         currentPosition.x = x_res;
@@ -710,10 +805,10 @@ pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
             // 7 - 6 = 1
             // 7 - 1 = 6
             if (src.y == 7 - home_row) {
-                const promCapQueen = SpecialMove{ .dst = targetSquare, .flag = .queen_promo_capture };
-                const promCapRook = SpecialMove{ .dst = targetSquare, .flag = .rook_promo_capture };
-                const promCapBishop = SpecialMove{ .dst = targetSquare, .flag = .bishop_promo_capture };
-                const promCapKnight = SpecialMove{ .dst = targetSquare, .flag = .knight_promo_capture };
+                const promCapQueen = SpecialMove{ .dst = targetSquare, .flag = .queen_promotion };
+                const promCapRook = SpecialMove{ .dst = targetSquare, .flag = .rook_promotion };
+                const promCapBishop = SpecialMove{ .dst = targetSquare, .flag = .bishop_promotion };
+                const promCapKnight = SpecialMove{ .dst = targetSquare, .flag = .knight_promotion };
                 if (specials.capacity > specials.items.len + 4) {
                     specials.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
                 }
@@ -728,10 +823,10 @@ pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
             // 7 - 6 = 1
             // 7 - 1 = 6
             if (src.y == 7 - home_row) {
-                const promCapQueen = SpecialMove{ .dst = targetSquare, .flag = .queen_promo_capture };
-                const promCapRook = SpecialMove{ .dst = targetSquare, .flag = .rook_promo_capture };
-                const promCapBishop = SpecialMove{ .dst = targetSquare, .flag = .bishop_promo_capture };
-                const promCapKnight = SpecialMove{ .dst = targetSquare, .flag = .knight_promo_capture };
+                const promCapQueen = SpecialMove{ .dst = targetSquare, .flag = .queen_promotion };
+                const promCapRook = SpecialMove{ .dst = targetSquare, .flag = .rook_promotion };
+                const promCapBishop = SpecialMove{ .dst = targetSquare, .flag = .bishop_promotion };
+                const promCapKnight = SpecialMove{ .dst = targetSquare, .flag = .knight_promotion };
                 specials.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
             } else {
                 captures |= targetSquare.to_mask();
@@ -857,4 +952,127 @@ test "en passant capture" {
         return err;
     };
     std.debug.print("===Passed test:pawn en_passant \n", .{});
+}
+
+test "uci to move: e2e4" {
+    std.debug.print("Started test:uci to move e2e4 \n", .{});
+    //    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    //    defer arena.deinit();
+    //    const allocator = arena.allocator();
+
+    var bb = try BB.BitBoard.from_fen("8/8/8/8/8/8/PPPPPPPP/8 w - - 0 1");
+
+    const move = try Move.from_UCI(&bb, "e2e4");
+
+    std.testing.expect(move.src.x == 4 and move.src.y == 6) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(move.flag == SpecialFlag.double_pawn_push) catch |err| {
+        std.debug.print("flag is {s}\n", .{@tagName(move.flag)});
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.debug.print("===Passed test:uci to move e2e4 \n", .{});
+}
+
+test "uci capture" {
+    std.debug.print("Started test:uci to move capture \n", .{});
+    //    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    //    defer arena.deinit();
+    //    const allocator = arena.allocator();
+
+    var bb = try BB.BitBoard.from_fen("8/8/8/8/8/3p4/PPPPPPPP/8 w - - 0 1");
+
+    const move = try Move.from_UCI(&bb, "e2d3");
+
+    std.testing.expect(move.src.x == 4 and move.src.y == 6) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.testing.expect(move.flag == SpecialFlag.capture) catch |err| {
+        std.debug.print("flag is {s}\n", .{@tagName(move.flag)});
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.debug.print("===Passed test:uci to move capture \n", .{});
+}
+
+test "uci to move en passant capture" {
+    std.debug.print("Started test:uci to move en passant \n", .{});
+
+    var bb = try BB.BitBoard.from_fen("8/8/8/3Pp3/8/8/8/8 w - e6 0 1");
+
+    const move = try Move.from_UCI(&bb, "d5e6");
+
+    std.testing.expect(move.src.x == 3 and move.src.y == 3) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.testing.expect(move.flag == SpecialFlag.en_passant_capture) catch |err| {
+        std.debug.print("flag is {s}\n", .{@tagName(move.flag)});
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.debug.print("===Passed test:uci to move en passant \n", .{});
+}
+
+test "uci to move castle king" {
+    std.debug.print("Started test:uci to move castle king \n", .{});
+
+    var bb = try BB.BitBoard.from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
+
+    const move = try Move.from_UCI(&bb, "e1h1");
+
+    std.testing.expect(move.src.x == 4 and move.src.y == 7) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.testing.expect(move.flag == SpecialFlag.king_castle) catch |err| {
+        std.debug.print("flag is {s}\n", .{@tagName(move.flag)});
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.debug.print("===Passed test:uci to move castle king \n", .{});
+}
+test "uci to move castle queen" {
+    std.debug.print("Started test:uci to move castle queen \n", .{});
+
+    var bb = try BB.BitBoard.from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
+
+    const move = try Move.from_UCI(&bb, "e1a1");
+
+    std.testing.expect(move.src.x == 4 and move.src.y == 7) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    std.testing.expect(move.flag == SpecialFlag.queen_castle) catch |err| {
+        std.debug.print("flag is {s}\n", .{@tagName(move.flag)});
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.debug.print("===Passed test:uci to move castle queen \n", .{});
+}
+
+test "uci to move: promote" {
+    std.debug.print("Started test:uci to move promote \n", .{});
+
+    var bb = try BB.BitBoard.from_fen("8/8/8/8/8/8/p7/8 b - - 0 1");
+
+    const move = try Move.from_UCI(&bb, "a2a1q");
+
+    std.testing.expect(move.src.x == 0 and move.src.y == 6) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.testing.expect(move.flag == SpecialFlag.queen_promotion) catch |err| {
+        std.debug.print("flag is {s}\n", .{@tagName(move.flag)});
+        bb.print_ansi_debug();
+        return err;
+    };
+    std.debug.print("===Passed test:uci to move promote \n", .{});
 }

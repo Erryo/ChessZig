@@ -42,7 +42,7 @@ pub fn make_move_position(bb: *BB.BitBoard, move: *const MoveGen.Move) void {
 
                     bb.en_passant = .{ .x = move.src.x, .y = coord_y };
                 },
-                .bishop_promo_capture, .knight_promo_capture, .rook_promo_capture, .queen_promo_capture, .bishop_promotion, .knight_promotion, .rook_promotion, .queen_promotion => {
+                .bishop_promotion, .knight_promotion, .rook_promotion, .queen_promotion => {
                     bb.removeGeneral(move.src);
                     bb.storeGeneral(move.dst, move.flag.to_promotion_piece(bb.active_color));
                 },

@@ -4,7 +4,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 
-const PieceList = "prkqbn";
+pub const PieceList = "prkqbn";
 
 pub const ParseError = error{
     InvalidNumber,
@@ -34,10 +34,9 @@ pub const BitBoard: type = struct {
     en_passant: Coord2d,
 
     castling_rights: [4]bool,
+    game_state: GameState,
 
     active_color: Color,
-
-    game_state: GameState,
 
     pub fn from_fen(fen: []const u8) !BitBoard {
         var bb: BitBoard = undefined;
@@ -666,7 +665,7 @@ pub const BitBoard: type = struct {
         }
         try writer.print("\n", .{});
 
-        try writer.flush();
+        //try writer.flush();
     }
 
     pub fn to_FEN(bb: *const BitBoard) ![200]u8 {
@@ -825,7 +824,7 @@ pub const BitBoard: type = struct {
     }
 };
 
-pub const GameState: type = enum(u3) {
+pub const GameState: type = enum(u4) {
     going_on,
     white_won,
     black_won,
@@ -971,14 +970,14 @@ pub fn coord_to_mask(x: u3, y: u3) u64 {
     return @as(u64, 1) << (@as(u6, 7 - y) * 8 + @as(u6, 7 - x));
 }
 
-fn char_to_lower(char: u8) u8 {
+pub fn char_to_lower(char: u8) u8 {
     if (char >= 65 and char <= 90) {
         return char + 32;
     }
     return char;
 }
 
-fn is_in_string(str: []const u8, needle: u8) bool {
+pub fn is_in_string(str: []const u8, needle: u8) bool {
     for (str) |char| {
         if (char == needle) {
             return true;
@@ -987,7 +986,7 @@ fn is_in_string(str: []const u8, needle: u8) bool {
     return false;
 }
 
-fn is_ascii_number(char: u8) bool {
+pub fn is_ascii_number(char: u8) bool {
     return (char >= 48) and (char <= 57);
 }
 
