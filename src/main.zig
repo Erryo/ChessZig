@@ -26,9 +26,6 @@ pub fn main() !void {
     var r = std.fs.File.stdin().reader(&stdin_buffer);
     const reader = &r.interface;
 
-    //    var line_buffer: [512]u8 = std.mem.zeroes([512]u8);
-    //    var line_writer: std.Io.Writer = .fixed(&line_buffer);
-
     try writer.print("starting chess engine: CLI-UCI version\n", .{});
 
     var bitboard = try chess.BB.BitBoard.from_fen(chess.BB.Starting_FEN);

@@ -238,7 +238,7 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
 }
 
 pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) !bool {
-    var moveFn: *const fn (*const BB.BitBoard, BB.Coord2d, ?Allocator) MoveGen.GenerationError!MoveGen.MoveList = undefined;
+    var moveFn: MoveGen.moveGenFn = undefined;
     switch (move.piece.kind) {
         .pawn => moveFn = MoveGen.generate_pawn_moves,
         .knight => moveFn = MoveGen.generate_knight_moves,
@@ -248,8 +248,9 @@ pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator
         .king => moveFn = MoveGen.generate_king_moves,
     }
 
+    var special_moves = try MoveGen.SpecialsArray.initCapacity(allocator, 0);
     // var because deinit'ing specials
-    var possibleMoves = try moveFn(bb, move.src, allocator);
+    const possibleMoves = try moveFn(bb, move.src, allocator, special_moves);
 
     const dst_mask = move.dst.to_mask();
     if (possibleMoves.quiets & dst_mask != 0) {
@@ -262,7 +263,7 @@ pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator
     if (possibleMoves.specials == null) {
         return false;
     }
-    defer possibleMoves.specials.?.deinit(allocator);
+    defer special_moves.deinit(allocator);
 
     for (possibleMoves.specials.?.items) |special| {
         if (special.dst.x == move.dst.x and special.dst.y == move.dst.y) {

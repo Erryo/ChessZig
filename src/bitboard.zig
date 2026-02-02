@@ -955,6 +955,23 @@ pub const Coord2d: type = struct {
     x: u3,
     y: u3,
 
+    pub fn pop_and_get_lsb(board: *u64) Coord2d {
+        if (board.* == 0) @panic("received board == 0 when making coord");
+        const leading_0s = 63 - @ctz(board.*);
+        const x: u3 = @intCast(@mod(leading_0s, 8));
+        const y: u3 = @as(u3, @intCast(leading_0s / 8));
+
+        board.* &= board.* - 1;
+        return .{ .x = x, .y = y };
+    }
+    fn from_msb(board: u64) Coord2d {
+        if (board == 0) @panic("received board == 0 when making coord");
+        const leading_0s = @clz(board);
+        const x: u3 = @intCast(@mod(leading_0s, 8));
+        const y: u3 = @as(u3, @intCast(leading_0s / 8));
+        return .{ .x = x, .y = y };
+    }
+
     pub fn to_mask(c2d: Coord2d) u64 {
         return @as(u64, 1) << (@as(u6, 7 - c2d.y) * 8 + @as(u6, 7 - c2d.x));
     }
@@ -963,6 +980,41 @@ pub const Coord2d: type = struct {
         return [2]u8{ @as(u8, c2d.x) + 'a', @as(u8, 7 - c2d.y) + '1' };
     }
 };
+
+test "coord2d from lsb +pop" {
+    std.debug.print("Starting test: coord2d from lsb and pop \n", .{});
+
+    var board: u64 = 0;
+    board = coord_to_mask(0, 0);
+    const c2d_1 = Coord2d.pop_and_get_lsb(&board);
+    try expect(c2d_1.x == 0 and c2d_1.y == 0);
+
+    board = coord_to_mask(7, 7);
+    const c2d_2 = Coord2d.pop_and_get_lsb(&board);
+    try expect(c2d_2.x == 7 and c2d_2.y == 7);
+
+    board = coord_to_mask(3, 4);
+    const c2d_3 = Coord2d.pop_and_get_lsb(&board);
+    try expect(c2d_3.x == 3 and c2d_3.y == 4);
+    std.debug.print("===Passed test: coord2d from lsb and pop \n", .{});
+}
+
+test "coord2d from most significant bit" {
+    std.debug.print("Starting test: coord2d from msb \n", .{});
+    var board: u64 = 0;
+    board = coord_to_mask(0, 0);
+    const c2d_1 = Coord2d.from_msb(board);
+    try expect(c2d_1.x == 0 and c2d_1.y == 0);
+
+    board = coord_to_mask(7, 7);
+    const c2d_2 = Coord2d.from_msb(board);
+    try expect(c2d_2.x == 7 and c2d_2.y == 7);
+
+    board = coord_to_mask(3, 4);
+    const c2d_3 = Coord2d.from_msb(board);
+    try expect(c2d_3.x == 3 and c2d_3.y == 4);
+    std.debug.print("===Passed test: coord2d from msb \n", .{});
+}
 
 test "coord to mask " {
     try expect(coord_to_mask(0, 0) == 1 << 63);
