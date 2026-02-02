@@ -237,7 +237,7 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
     }
 }
 
-pub fn pseudo_check(bb: *BB.BitBoard, move: MoveGen.Move, allocator: Allocator) !bool {
+pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) !bool {
     var moveFn: *const fn (*const BB.BitBoard, BB.Coord2d, ?Allocator) MoveGen.GenerationError!MoveGen.MoveList = undefined;
     switch (move.piece.kind) {
         .pawn => moveFn = MoveGen.generate_pawn_moves,
@@ -273,9 +273,9 @@ pub fn pseudo_check(bb: *BB.BitBoard, move: MoveGen.Move, allocator: Allocator) 
     return false;
 }
 
-pub fn full_check(bb: *BB.BitBoard, move: MoveGen.Move) bool {
-    _ = bb;
-    _ = move;
+pub fn full_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) !bool {
+    const pseudo_check_passed = (try pseudo_check(bb, move, allocator));
+    if (!pseudo_check_passed) return false;
     return true;
 }
 
@@ -297,7 +297,7 @@ test "pseudo_check " {
         .dst = .{ .x = 2, .y = 5 },
     };
 
-    const result = try pseudo_check(&bb, move, allocator);
+    const result = try pseudo_check(&bb, &move, allocator);
     std.testing.expect(result == true) catch |err| {
         bb.print_ansi_debug();
         return err;
@@ -351,7 +351,7 @@ test "pseudo_check illegal moves " {
     for (move_list) |move| {
         bb.active_color = move.piece.color;
 
-        const result = try pseudo_check(&bb, move, allocator);
+        const result = try pseudo_check(&bb, &move, allocator);
         std.testing.expect(result == false) catch |err| {
             bb.print_ansi_debug();
             std.debug.print("move X{d} Y{d} passed  pseudo_check move: {s}{s}\n", .{ move.dst.x, move.dst.y, move.src.to_algebraic(), move.dst.to_algebraic() });

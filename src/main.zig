@@ -1,13 +1,19 @@
 const std = @import("std");
 const chess = @import("chessZig");
+const Allocator = std.mem.Allocator;
 
 const GameError = error{
     InvalidMove,
 };
 
 pub fn main() !void {
-    //    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    //    const alloator = arena.allocator();
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) @panic("memory leaked");
+    }
 
     var stdout_buffer: [1024]u8 = std.mem.zeroes([1024]u8);
     var w = std.fs.File.stdout().writer(&stdout_buffer);
@@ -25,26 +31,34 @@ pub fn main() !void {
 
     try writer.print("starting chess engine: CLI-UCI version\n", .{});
 
-    const bitboard = try chess.BB.BitBoard.from_fen(chess.BB.Starting_FEN);
+    var bitboard = try chess.BB.BitBoard.from_fen(chess.BB.Starting_FEN);
 
-    var game_manager: GameManager = .{ .bitboard = bitboard, .stdout = writer };
+    var game_manager: GameManager = .{ .bitboard = &bitboard, .stdout = writer, .allocator = allocator };
 
     //var timer = try std.time.Timer.start();
 
+    var sleep_s: u64 = 0;
+    var sleep_ns: u64 = 0;
     while (true) {
-        defer writer.flush() catch {};
-        try writer.print("\x1b[2J\x1b[H", .{});
+        defer {
+            writer.flush() catch {};
+            std.posix.nanosleep(sleep_s, sleep_ns);
+            sleep_ns = 0;
+            sleep_s = 0;
+        }
+        try writer.print("\x1b[2J\x1b[H", .{}); // clear the screen
+
+        const fen = try game_manager.bitboard.to_FEN();
+        try writer.print("FEN:{s}\n", .{fen});
 
         try game_manager.bitboard.print_ansi(writer);
+
         try writer.print("\nYour Move in UCI>>>", .{});
         try writer.flush();
 
-        //        const bytes_read: usize = reader.streamDelimiterLimit(&line_writer, '\n', .limited(6)) catch |err| {
-        //            try writer.print("the program failed to process your move because of an error:{s}\nPlease try again!\n", .{@errorName(err)});
-        //            continue;
-        //        };
         const input_line = reader.takeDelimiter('\n') catch |err| {
             try writer.print("the program failed to process your move because of an error:{s}\nPlease try again!\n", .{@errorName(err)});
+            sleep_s = 3;
             continue;
         };
 
@@ -53,32 +67,42 @@ pub fn main() !void {
         if (input_line) |line| {
             if (line.len > 5) {
                 try writer.print("the program received a move that exceeds the limit of 5 characters. Please try again!\n", .{});
+                sleep_s = 3;
                 continue;
             }
             uci = line;
         } else {
             try writer.print("the program received an empty move. Please try again!\n", .{});
+            sleep_s = 3;
             continue;
         }
 
-        try writer.print("Your input was: {s} \n", .{uci});
-        try game_manager.processMove(uci);
-        try game_manager.bitboard.print_ansi(writer);
+        const processed_sucsesfully = try game_manager.processMove(uci);
 
-        std.posix.nanosleep(0, 5e8);
+        if (!processed_sucsesfully) {
+            sleep_s = 3;
+            continue;
+        }
     }
 }
 
 const GameManager = struct {
     stdout: *std.Io.Writer,
-    bitboard: chess.BB.BitBoard,
+    allocator: Allocator,
+    bitboard: *chess.BB.BitBoard,
 
-    fn processMove(gm: *GameManager, uci: []const u8) !void {
-        var move = chess.MoveGen.Move.from_UCI(&gm.bitboard, uci) catch |err| {
+    fn processMove(gm: *GameManager, uci: []const u8) !bool {
+        var move = chess.MoveGen.Move.from_UCI(gm.bitboard, uci) catch |err| {
             try gm.stdout.print("the program failed to process your move because of an error:{s}\nPlease try again!\n", .{@errorName(err)});
-            return;
+            return false;
         };
 
-        chess.Engine.make_move(&gm.bitboard, &move);
+        const full_check_passed = try chess.Engine.full_check(gm.bitboard, &move, gm.allocator);
+        if (!full_check_passed) {
+            try gm.stdout.print("the program received an illegal move.Please try again!\n", .{});
+            return false;
+        }
+        chess.Engine.make_move(gm.bitboard, &move);
+        return true;
     }
 };

@@ -858,9 +858,7 @@ pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
                 .x = src.x,
                 .y = double_push,
             };
-            std.debug.print("douplePushSquare is X:{d} Y{d}\n", .{ douplePushSquare.x, douplePushSquare.y });
             if (bb.isEmptyGeneral(douplePushSquare)) {
-                std.debug.print("appening double_pawn_push\n", .{});
                 const douplePushMove = SpecialMove{ .dst = douplePushSquare, .flag = .double_pawn_push };
                 specials.append(allocator.?, douplePushMove) catch return GenerationError.AllocationFailed;
             }

@@ -343,7 +343,7 @@ pub const BitBoard: type = struct {
             .knight => {
                 switch (piece.color) {
                     .white => bb.knights.white |= mask,
-                    .black => bb.pawns.black |= mask,
+                    .black => bb.knights.black |= mask,
                 }
             },
             .bishop => {
@@ -682,10 +682,10 @@ pub const BitBoard: type = struct {
                 }
                 const c2d = Coord2d{ .x = x, .y = y };
                 if (bb.isEmptyGeneral(c2d)) {
+                    numb_empty += 1;
                     if (x == 7) {
                         break;
                     }
-                    numb_empty += 1;
                     continue;
                 }
                 if (numb_empty != 0) {
@@ -693,7 +693,7 @@ pub const BitBoard: type = struct {
                         std.debug.panic("numb_empty is too big: {d}\n", .{numb_empty});
                     }
 
-                    fen[idx_in_str] = numb_empty + 48;
+                    fen[idx_in_str] = numb_empty + '0';
                     idx_in_str += 1;
                     numb_empty = 0;
                 }
@@ -707,7 +707,7 @@ pub const BitBoard: type = struct {
                 }
             }
             if (numb_empty != 0) {
-                fen[idx_in_str] = numb_empty + 49;
+                fen[idx_in_str] = numb_empty + '0';
                 idx_in_str += 1;
             }
             numb_empty = 0;
@@ -733,6 +733,10 @@ pub const BitBoard: type = struct {
         if (idx_in_str >= fen.len) {
             return ParseError.BufferTooSmall;
         }
+        if (!bb.castling_rights[0] and !bb.castling_rights[1] and !bb.castling_rights[2] and !bb.castling_rights[3]) {
+            fen[idx_in_str] = '-';
+        }
+
         if (bb.castling_rights[castle_white_king]) {
             fen[idx_in_str] = 'K';
         }
@@ -1161,4 +1165,42 @@ test "fen to board invalid" {
         const result = BitBoard.from_fen(fen);
         try std.testing.expectError(expected_error, result);
     }
+}
+
+test "fen to board and board to fen" {
+    // fen to board == board to fen
+    std.debug.print("Starting test: fen to board and board to fen \n", .{});
+
+    const test_fens = [_][]const u8{
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 2 3",
+        "r3k2r/pppq1ppp/2n2n2/2bp4/4P3/2N2N2/PPPQ1PPP/R3K2R w KQkq - 0 10",
+        "8/8/8/8/8/8/8/8 w - - 0 1",
+        "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2",
+        "r1bq1rk1/pppp1ppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQ1RK1 w - - 6 7",
+    };
+    for (test_fens) |fen| {
+        const board_result = BitBoard.from_fen(fen);
+        const board = try board_result;
+
+        const fen_converted_result = board.to_FEN();
+        const fen_converted = try fen_converted_result;
+
+        // trim the fen_converted to the length of the original fen for comparison
+        const fen_converted_trimmed = fen_converted[0..fen.len];
+        for (fen, 0..) |char, idx| {
+            const actual = fen_converted_trimmed[idx];
+            std.testing.expectEqual(char, actual) catch |err| {
+                board.print_ansi_debug();
+                std.debug.print("char:{c} got:{c} at idx:{d}\n", .{ char, actual, idx });
+                std.debug.print("fen      :{s}\n", .{fen});
+                std.debug.print("generated:{s}\n", .{fen_converted});
+                std.debug.print("converted:{s}\n", .{fen_converted_trimmed});
+                std.debug.print("got err {s}\n", .{@errorName(err)});
+                return err;
+            };
+        }
+    }
+
+    std.debug.print("===Passed test: fen to board and board to fen \n", .{});
 }
