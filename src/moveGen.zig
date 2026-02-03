@@ -700,7 +700,6 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
                     if (clearWay) {
                         const special_move = SpecialMove{ .dst = targetSquare, .flag = SpecialFlag.queen_castle };
                         specials.append(allocator.?, special_move) catch return GenerationError.AllocationFailed;
-                        std.debug.print("white queeen side castle has bees aproved", .{});
                     }
                 }
             }

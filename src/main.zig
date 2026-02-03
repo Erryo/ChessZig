@@ -109,7 +109,7 @@ const GameManager = struct {
     }
 
     fn bot_move(gm: *GameManager) !void {
-        var best_move = try chess.Engine.get_best_move(gm.bitboard, &gm.allocator);
+        var best_move = try chess.Engine.get_best_move(gm.bitboard, null);
         chess.Engine.make_move(
             gm.bitboard,
             &best_move.move,

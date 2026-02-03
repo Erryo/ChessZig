@@ -11,11 +11,20 @@ pub const MakeUnmakeError = error{
     UndoIsNull,
 };
 
-pub fn get_best_move(bb: *BB.BitBoard, allocator: *Allocator) !struct { move: MoveGen.Move, score: f32 } {
+pub fn get_best_move(bb: *BB.BitBoard, allocator_opt: ?Allocator) !struct { move: MoveGen.Move, score: f32 } {
+    var allocator: Allocator = undefined;
+    if (allocator_opt) |alc| {
+        allocator = alc;
+    } else {
+        var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+        defer arena.deinit();
+        allocator = arena.allocator();
+    }
+
     var best_move: MoveGen.Move = undefined;
     var best_score_found = -std.math.inf(f32);
 
-    const allMoves = try generate_all_moves(bb, allocator.*);
+    const allMoves = try generate_all_moves(bb, allocator);
     const depth = Def_Depth;
     defer allocator.free(allMoves);
 
@@ -25,7 +34,7 @@ pub fn get_best_move(bb: *BB.BitBoard, allocator: *Allocator) !struct { move: Mo
     for (allMoves) |*move| {
         make_move(bb, move);
         defer unmake_move(bb, move);
-        const move_score = -try nega_max_ab(bb, allocator, alpha, beta, depth - 1);
+        const move_score = -try nega_max_ab(bb, &allocator, alpha, beta, depth - 1);
         if (move_score > best_score_found) {
             best_move = move.*;
             best_score_found = move_score;
