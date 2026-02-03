@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert();
 
 pub const SpecialsArray = std.ArrayList(SpecialMove);
+pub const MovesArray = std.ArrayList(Move);
 
 const KnightDeltas = [8][2]i3{
     [2]i3{ -2, -1 },
@@ -46,7 +47,7 @@ pub const ParsingError = error{
     InvalidCharacter,
 };
 
-pub const moveGenFn = *const fn (*const BB.BitBoard, BB.Coord2d, ?Allocator, ?SpecialsArray) GenerationError!MoveList;
+pub const moveGenFn = *const fn (*const BB.BitBoard, BB.Coord2d, ?Allocator, ?*SpecialsArray) GenerationError!MoveList;
 
 pub const Move: type = struct {
     src: BB.Coord2d,
@@ -184,7 +185,8 @@ pub const MoveList: type = struct {
     quiets: u64,
     captures: u64,
     src: BB.Coord2d,
-    specials: ?SpecialsArray,
+    piece: BB.Piece,
+    specials: ?*SpecialsArray,
 };
 
 pub const SpecialMove: type = struct {
@@ -345,13 +347,14 @@ pub fn generate_rook_moves(
     bb: *const BB.BitBoard,
     src: BB.Coord2d,
     _: ?Allocator,
-    _: ?SpecialsArray,
+    _: ?*SpecialsArray,
 ) GenerationError!MoveList {
     const moves = axis_aligned_ray_move(bb, src);
     return MoveList{
         .src = src,
         .captures = moves.captures,
         .quiets = moves.quiets,
+        .piece = .{ .color = bb.active_color, .kind = .rook },
         .specials = null,
     };
 }
@@ -402,9 +405,9 @@ pub fn diagonal_moves(bb: *const BB.BitBoard, src: BB.Coord2d) struct { quiets: 
     return .{ .quiets = quiets, .captures = captures };
 }
 
-pub fn generate_bishop_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocator, _: ?SpecialsArray) GenerationError!MoveList {
+pub fn generate_bishop_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocator, _: ?*SpecialsArray) GenerationError!MoveList {
     const moves = diagonal_moves(bb, src);
-    return MoveList{ .src = src, .captures = moves.captures, .quiets = moves.quiets, .specials = null };
+    return MoveList{ .src = src, .captures = moves.captures, .quiets = moves.quiets, .specials = null, .piece = .{ .color = bb.active_color, .kind = .bishop } };
 }
 
 test "diagonal_moves" {
@@ -451,7 +454,7 @@ test "diagonal_moves blocked" {
     std.debug.print("===Passed test:diagonal_moves blocked\n", .{});
 }
 
-pub fn generate_queen_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocator, _: ?SpecialsArray) GenerationError!MoveList {
+pub fn generate_queen_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocator, _: ?*SpecialsArray) GenerationError!MoveList {
     const diagonals = diagonal_moves(bb, src);
     const axis_aligned = axis_aligned_ray_move(bb, src);
     return MoveList{
@@ -459,6 +462,7 @@ pub fn generate_queen_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocat
         .captures = (diagonals.captures | axis_aligned.captures),
         .quiets = (diagonals.quiets | axis_aligned.quiets),
         .specials = null,
+        .piece = .{ .color = bb.active_color, .kind = .queen },
     };
 }
 
@@ -516,13 +520,13 @@ test "queen moves block" {
     std.debug.print("Blocked test:queen movement blocked\n", .{});
 }
 
-pub fn generate_knight_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocator, _: ?SpecialsArray) GenerationError!MoveList {
+pub fn generate_knight_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Allocator, _: ?*SpecialsArray) GenerationError!MoveList {
     var quiets: u64 = 0;
     var captures: u64 = 0;
 
     for (KnightDeltas) |delta| {
         var currentPosition = src;
-        const x_res, const x_overflow = if (delta[0] > 0)
+        const x_res, const x_overflow: u1 = if (delta[0] > 0)
             @addWithOverflow(src.x, @as(u3, @intCast(delta[0])))
         else
             @subWithOverflow(src.x, @as(u3, @intCast(-delta[0])));
@@ -531,12 +535,12 @@ pub fn generate_knight_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Alloca
             continue;
         }
 
-        const y_res, const y_overflow = if (delta[1] > 0)
+        const y_res, const y_overflow: u1 = if (delta[1] > 0)
             @addWithOverflow(src.y, @as(u3, @intCast(delta[1])))
         else
             @subWithOverflow(src.y, @as(u3, @intCast(-delta[1])));
 
-        if (y_overflow == 2) {
+        if (y_overflow == 1) {
             continue;
         }
         currentPosition.x = x_res;
@@ -557,6 +561,7 @@ pub fn generate_knight_moves(bb: *const BB.BitBoard, src: BB.Coord2d, _: ?Alloca
         .quiets = quiets,
         .captures = captures,
         .specials = null,
+        .piece = .{ .color = bb.active_color, .kind = .knight },
     };
 }
 
@@ -599,13 +604,9 @@ test "test knight move blocked enemy and own" {
     std.debug.print("===Passed test:knight movement blocked\n", .{});
 }
 
-pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?Allocator, specials_array: ?SpecialsArray) GenerationError!MoveList {
-    if (allocator == null or specials_array == null) {
-        return GenerationError.NoAllocatorAvailable;
-    }
+pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?Allocator, specials_array: ?*SpecialsArray) GenerationError!MoveList {
     var quiets: u64 = 0;
     var captures: u64 = 0;
-    var specials: SpecialsArray = specials_array.?;
 
     for (KingDeltas) |delta| {
         var currentPosition = src;
@@ -641,6 +642,16 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
         }
         continue;
     }
+    if (allocator == null or specials_array == null) {
+        return MoveList{
+            .src = src,
+            .quiets = quiets,
+            .captures = captures,
+            .specials = null,
+            .piece = .{ .kind = .king, .color = bb.active_color },
+        };
+    }
+    var specials: *SpecialsArray = specials_array.?;
 
     switch (bb.active_color) {
         .black => {
@@ -702,6 +713,7 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
         .quiets = quiets,
         .captures = captures,
         .specials = specials,
+        .piece = .{ .kind = .king, .color = bb.active_color },
     };
 }
 
@@ -715,7 +727,7 @@ test "king simple moves" {
     const src = BB.Coord2d{ .x = 3, .y = 3 };
     var specials = try SpecialsArray.initCapacity(allocator, 1);
     defer specials.deinit(allocator);
-    const moves = try generate_king_moves(&bb, src, allocator, specials);
+    const moves = try generate_king_moves(&bb, src, allocator, &specials);
 
     var writer = std.fs.File.stdout().writer(&.{});
     const stdout = &writer.interface;
@@ -743,7 +755,7 @@ test "test king castle " {
     const src = BB.Coord2d{ .x = 4, .y = 7 };
     var specials = try SpecialsArray.initCapacity(allocator, 1);
     defer specials.deinit(allocator);
-    const moves = try generate_king_moves(&bb, src, allocator, specials);
+    const moves = try generate_king_moves(&bb, src, allocator, &specials);
 
     var writer = std.fs.File.stdout().writer(&.{});
     const stdout = &writer.interface;
@@ -763,60 +775,44 @@ test "test king castle " {
     std.debug.print("===Passed test:king castle \n", .{});
 }
 
-pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?Allocator, special_array: ?SpecialsArray) GenerationError!MoveList {
-    if (allocator == null or special_array == null) {
-        return GenerationError.NoAllocatorAvailable;
-    }
-
+pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?Allocator, special_array: ?*SpecialsArray) GenerationError!MoveList {
+    const do_specials: bool = (allocator != null and special_array != null);
     var quiets: u64 = 0;
     var captures: u64 = 0;
 
     const direction_down: bool = (bb.active_color == BB.Color.black);
     const home_row: u3 = if (bb.active_color == BB.Color.black) 1 else 6;
 
-    var specials = special_array.?;
-
-    var moves: MoveList = .{ .specials = specials, .src = src, .captures = captures, .quiets = quiets };
+    var moves: MoveList = .{ .specials = null, .src = src, .captures = captures, .quiets = quiets, .piece = .{ .color = bb.active_color, .kind = .pawn } };
 
     if (direction_down and src.y == 7) return moves;
     if (!direction_down and src.y == 0) return moves;
 
     const single_push = if (direction_down) src.y + 1 else src.y - 1;
-    if (src.x < 7) {
+    if (src.x < 7 and do_specials) {
         const targetSquare = BB.Coord2d{ .x = src.x + 1, .y = single_push };
         if (bb.en_passant.x == targetSquare.x and bb.en_passant.y == targetSquare.y) {
-            //            std.debug.print("passed target check\n", .{});
             if (bb.isEmptyGeneral(targetSquare)) {
-                //std.debug.print("passed is empty; enemy {s} {s} at X{d} Y{d}\n", .{ if (bb.active_color == BB.Color.white) "black" else "white", if (bb.isEnemy(.{ .x = targetSquare.x, .y = src.y })) "is" else "is not", targetSquare.x, src.y });
-
-                //std.debug.print("X:{c} Y:{c}\n", .{ @as(u8, targetSquare.x) + 97, @as(u8, 8) - src.y + 48 });
-                //         BB.print_ansi_debug(bb.pawns.black | BB.coord_to_mask(targetSquare.x, src.y));
                 if (bb.isEnemy(.{ .x = targetSquare.x, .y = src.y })) {
-                    //std.debug.print("passed is enemy\n", .{});
                     const specialMove = SpecialMove{
                         .dst = targetSquare,
                         .flag = SpecialFlag.en_passant_capture,
                     };
-                    specials.append(allocator.?, specialMove) catch return GenerationError.AllocationFailed;
+                    special_array.?.append(allocator.?, specialMove) catch return GenerationError.AllocationFailed;
                 }
             }
         }
     }
-    if (src.x >= 1) {
+    if (src.x >= 1 and do_specials) {
         const targetSquare = BB.Coord2d{ .x = src.x - 1, .y = single_push };
         if (bb.en_passant.x == targetSquare.x and bb.en_passant.y == targetSquare.y) {
-            //            std.debug.print("passed target check\n", .{});
             if (bb.isEmptyGeneral(targetSquare)) {
-                //               std.debug.print("passed is empty; enemy at X{d} Y{d}\n", .{ targetSquare.x, src.y });
-                // LOOK OUT: see commit 'fixed en pasant' in ChessWeb go version if
-                // en passant doesnt work
                 if (bb.isEnemy(.{ .x = targetSquare.x, .y = src.y })) {
-                    //                   std.debug.print("passed is enemy\n", .{});
                     const specialMove = SpecialMove{
                         .dst = targetSquare,
                         .flag = SpecialFlag.en_passant_capture,
                     };
-                    specials.append(allocator.?, specialMove) catch return GenerationError.AllocationFailed;
+                    special_array.?.append(allocator.?, specialMove) catch return GenerationError.AllocationFailed;
                 }
             }
         }
@@ -829,14 +825,12 @@ pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
         if (!bb.isEmptyGeneral(targetSquare) and bb.isEnemy(targetSquare)) {
             // 7 - 6 = 1
             // 7 - 1 = 6
-            if (src.y == 7 - home_row) {
+            if (src.y == 7 - home_row and do_specials) {
                 const promCapQueen = SpecialMove{ .dst = targetSquare, .flag = .queen_capture_promotion };
                 const promCapRook = SpecialMove{ .dst = targetSquare, .flag = .rook_capture_promotion };
                 const promCapBishop = SpecialMove{ .dst = targetSquare, .flag = .bishop_capture_promotion };
                 const promCapKnight = SpecialMove{ .dst = targetSquare, .flag = .knight_capture_promotion };
-                if (specials.capacity > specials.items.len + 4) {
-                    specials.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
-                }
+                special_array.?.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
             } else {
                 captures |= targetSquare.to_mask();
             }
@@ -845,14 +839,12 @@ pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
     if (src.x >= 1) {
         const targetSquare = BB.Coord2d{ .x = src.x - 1, .y = single_push };
         if (!bb.isEmptyGeneral(targetSquare) and bb.isEnemy(targetSquare)) {
-            // 7 - 6 = 1
-            // 7 - 1 = 6
-            if (src.y == 7 - home_row) {
+            if (src.y == 7 - home_row and do_specials) {
                 const promCapQueen = SpecialMove{ .dst = targetSquare, .flag = .queen_capture_promotion };
                 const promCapRook = SpecialMove{ .dst = targetSquare, .flag = .rook_capture_promotion };
                 const promCapBishop = SpecialMove{ .dst = targetSquare, .flag = .bishop_capture_promotion };
                 const promCapKnight = SpecialMove{ .dst = targetSquare, .flag = .knight_capture_promotion };
-                specials.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
+                special_array.?.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
             } else {
                 captures |= targetSquare.to_mask();
             }
@@ -862,119 +854,50 @@ pub fn generate_pawn_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
     const singlePushSquare: BB.Coord2d = .{ .x = src.x, .y = single_push };
     if (!bb.isEmptyGeneral(singlePushSquare)) {
         moves.captures = captures;
-        moves.specials = specials;
+        moves.specials = special_array;
         return moves;
     }
 
-    if (src.y == 7 - home_row) {
+    if (src.y == 7 - home_row and do_specials) {
         const promCapQueen = SpecialMove{ .dst = singlePushSquare, .flag = .queen_promotion };
         const promCapRook = SpecialMove{ .dst = singlePushSquare, .flag = .rook_promotion };
         const promCapBishop = SpecialMove{ .dst = singlePushSquare, .flag = .bishop_promotion };
         const promCapKnight = SpecialMove{ .dst = singlePushSquare, .flag = .knight_promotion };
-        specials.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
+        special_array.?.appendSlice(allocator.?, &[_]SpecialMove{ promCapQueen, promCapRook, promCapBishop, promCapKnight }) catch return GenerationError.AllocationFailed;
     } else {
         quiets |= singlePushSquare.to_mask();
     }
 
-    if (src.y == home_row) {
+    if (src.y == home_row and do_specials) {
         const double_push, const overflowed = if (direction_down) @addWithOverflow(src.y, 2) else @subWithOverflow(src.y, 2);
-        if (overflowed == 0) {
-            const douplePushSquare: BB.Coord2d = .{
-                .x = src.x,
-                .y = double_push,
-            };
-            if (bb.isEmptyGeneral(douplePushSquare)) {
-                const douplePushMove = SpecialMove{ .dst = douplePushSquare, .flag = .double_pawn_push };
-                specials.append(allocator.?, douplePushMove) catch return GenerationError.AllocationFailed;
-            }
-        } else {
+        if (overflowed == 1) {
             @panic("double_pawn_push overflowed when it should not");
+        }
+
+        const douplePushSquare: BB.Coord2d = .{
+            .x = src.x,
+            .y = double_push,
+        };
+        if (bb.isEmptyGeneral(douplePushSquare)) {
+            const douplePushMove = SpecialMove{ .dst = douplePushSquare, .flag = .double_pawn_push };
+            special_array.?.append(allocator.?, douplePushMove) catch return GenerationError.AllocationFailed;
         }
     }
     moves.captures = captures;
-    moves.specials = specials;
+    moves.specials = special_array;
     moves.quiets = quiets;
 
     return moves;
 }
-
-pub fn generate_piece_all_moves(bb: *const BB.BitBoard, piece: BB.Piece, allocator: Allocator) GenerationError!MoveList {
-    var all_moves: MoveList = .{ .specials = null, .captures = 0, .quiets = 0, .src = .{ .x = 0, .y = 0 } };
-    var moveFn: moveGenFn = undefined;
-    var board: u64 = undefined;
-
-    var all_specials = SpecialsArray.initCapacity(allocator, 1) catch return GenerationError.AllocationFailed;
-    switch (piece.kind) {
-        .pawn => {
-            moveFn = generate_pawn_moves;
-            if (bb.active_color == .white) board = bb.pawns.white else board = bb.pawns.black;
-        },
-        .knight => {
-            moveFn = generate_knight_moves;
-            if (bb.active_color == .white) board = bb.knights.white else board = bb.knights.black;
-        },
-        .bishop => {
-            moveFn = generate_bishop_moves;
-            if (bb.active_color == .white) board = bb.bishops.white else board = bb.bishops.black;
-        },
-        .rook => {
-            moveFn = generate_rook_moves;
-            if (bb.active_color == .white) board = bb.rooks.white else board = bb.rooks.black;
-        },
-        .queen => {
-            moveFn = generate_queen_moves;
-            if (bb.active_color == .white) board = bb.queens.white else board = bb.queens.black;
-        },
-        .king => {
-            moveFn = generate_king_moves;
-            if (bb.active_color == .white) board = bb.kings.white else board = bb.kings.black;
-        },
+pub fn print_move_array_debug(arr: MovesArray) void {
+    var src_s: u64 = 0;
+    var dst_s: u64 = 0;
+    for (arr.items) |move| {
+        src_s |= move.src.to_mask();
+        dst_s |= move.dst.to_mask();
     }
-    //for (specials.items) |sp_move| {
-    //    switch (sp_move.flag) {
-    //        .knight_capture_promotion, .bishop_capture_promotion, .queen_capture_promotion, .rook_capture_promotion, .capture, .en_passant_capture => {
-    //            all_moves.captures |= sp_move.dst.to_mask();
-    //        },
-    //        else => {
-    //            all_moves.quiets |= sp_move.dst.to_mask();
-    //        },
-    //    }
-    //    //                TODO: Bring back promotion capture
-    //}
-
-    while (board != 0) {
-        const src = BB.Coord2d.pop_and_get_lsb(&board);
-        const moves = try moveFn(bb, src, allocator, all_specials);
-        all_moves.quiets |= moves.quiets;
-        all_moves.captures |= moves.captures;
-    }
-
-    if (all_specials.items.len == 0) {
-        all_specials.deinit(allocator);
-        all_moves.specials = null;
-    } else {
-        all_moves.specials = all_specials;
-    }
-
-    return all_moves;
-}
-
-test "generate piece all moves" {
-    std.debug.print("Started test:generate piece all moves \n", .{});
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer if (gpa.deinit() == .leak) @panic("memory leak");
-    const allocator = gpa.allocator();
-
-    var bb = try BB.BitBoard.from_fen("8/8/8/3p4/2P5/8/8/8 w - - 0 1");
-
-    var moves: MoveList = try generate_piece_all_moves(&bb, .{ .kind = .pawn, .color = bb.active_color }, allocator);
-    BB.print_board_debug(moves.quiets);
-    BB.print_board_debug(moves.captures);
-    if (moves.specials) |*spcs| {
-        spcs.deinit(allocator);
-    }
-
-    std.debug.print("===Passed test:generate piece all moves \n", .{});
+    BB.print_board_debug(src_s);
+    BB.print_board_debug(dst_s);
 }
 
 test "pawn moves single push and capture" {
@@ -987,7 +910,7 @@ test "pawn moves single push and capture" {
     const src = BB.Coord2d{ .x = 2, .y = 4 };
     var specials = try SpecialsArray.initCapacity(allocator, 1);
     defer specials.deinit(allocator);
-    const moves = try generate_pawn_moves(&bb, src, allocator, specials);
+    const moves = try generate_pawn_moves(&bb, src, allocator, &specials);
 
     var writer = std.fs.File.stdout().writer(&.{});
     const stdout = &writer.interface;
@@ -1015,7 +938,7 @@ test "pawn double_pawn_push" {
     const src = BB.Coord2d{ .x = 0, .y = 6 };
     var specials = try SpecialsArray.initCapacity(allocator, 1);
     defer specials.deinit(allocator);
-    const moves = try generate_pawn_moves(&bb, src, allocator, specials);
+    const moves = try generate_pawn_moves(&bb, src, allocator, &specials);
 
     var writer = std.fs.File.stdout().writer(&.{});
     const stdout = &writer.interface;
@@ -1044,7 +967,7 @@ test "en passant capture" {
     const src = BB.Coord2d{ .x = 3, .y = 3 };
     var specials = try SpecialsArray.initCapacity(allocator, 1);
     defer specials.deinit(allocator);
-    const moves = try generate_pawn_moves(&bb, src, allocator, specials);
+    const moves = try generate_pawn_moves(&bb, src, allocator, &specials);
 
     var writer = std.fs.File.stdout().writer(&.{});
     const stdout = &writer.interface;

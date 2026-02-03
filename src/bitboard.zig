@@ -956,7 +956,7 @@ pub const Coord2d: type = struct {
     y: u3,
 
     pub fn pop_and_get_lsb(board: *u64) Coord2d {
-        if (board.* == 0) @panic("received board == 0 when making coord");
+        if (board.* == 0) @panic("received board == 0 when making coord pop+lsb");
         const leading_0s = 63 - @ctz(board.*);
         const x: u3 = @intCast(@mod(leading_0s, 8));
         const y: u3 = @as(u3, @intCast(leading_0s / 8));
@@ -964,8 +964,8 @@ pub const Coord2d: type = struct {
         board.* &= board.* - 1;
         return .{ .x = x, .y = y };
     }
-    fn from_msb(board: u64) Coord2d {
-        if (board == 0) @panic("received board == 0 when making coord");
+    pub fn from_msb(board: u64) Coord2d {
+        if (board == 0) @panic("received board == 0 when making coord msb");
         const leading_0s = @clz(board);
         const x: u3 = @intCast(@mod(leading_0s, 8));
         const y: u3 = @as(u3, @intCast(leading_0s / 8));

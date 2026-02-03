@@ -237,7 +237,7 @@ pub fn unmake_move_position(bb: *BB.BitBoard, move: *MoveGen.Move) void {
     }
 }
 
-pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) !bool {
+pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) MoveGen.GenerationError!bool {
     var moveFn: MoveGen.moveGenFn = undefined;
     switch (move.piece.kind) {
         .pawn => moveFn = MoveGen.generate_pawn_moves,
@@ -248,9 +248,9 @@ pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator
         .king => moveFn = MoveGen.generate_king_moves,
     }
 
-    var special_moves = try MoveGen.SpecialsArray.initCapacity(allocator, 0);
+    var special_moves = MoveGen.SpecialsArray.initCapacity(allocator, 0) catch return MoveGen.GenerationError.AllocationFailed;
     // var because deinit'ing specials
-    const possibleMoves = try moveFn(bb, move.src, allocator, special_moves);
+    const possibleMoves = moveFn(bb, move.src, allocator, &special_moves) catch return MoveGen.GenerationError.AllocationFailed;
 
     const dst_mask = move.dst.to_mask();
     if (possibleMoves.quiets & dst_mask != 0) {
@@ -274,10 +274,244 @@ pub fn pseudo_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator
     return false;
 }
 
-pub fn full_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) !bool {
+pub fn full_check(bb: *const BB.BitBoard, move: *const MoveGen.Move, allocator: Allocator) MoveGen.GenerationError!bool {
     const pseudo_check_passed = (try pseudo_check(bb, move, allocator));
     if (!pseudo_check_passed) return false;
     return true;
+}
+
+pub fn generate_piece_all_moves(bb: *BB.BitBoard, piece: BB.Piece, allocator: Allocator) MoveGen.GenerationError!MoveGen.MovesArray {
+    var moveFn: MoveGen.moveGenFn = undefined;
+    var board: u64 = undefined;
+
+    var all_moves = MoveGen.MovesArray.initCapacity(allocator, 1) catch return MoveGen.GenerationError.AllocationFailed;
+    var all_specials = MoveGen.SpecialsArray.initCapacity(allocator, 1) catch return MoveGen.GenerationError.AllocationFailed;
+    defer all_specials.deinit(allocator);
+
+    switch (piece.kind) {
+        .pawn => {
+            moveFn = MoveGen.generate_pawn_moves;
+            if (bb.active_color == .white) board = bb.pawns.white else board = bb.pawns.black;
+        },
+        .knight => {
+            moveFn = MoveGen.generate_knight_moves;
+            if (bb.active_color == .white) board = bb.knights.white else board = bb.knights.black;
+        },
+        .bishop => {
+            moveFn = MoveGen.generate_bishop_moves;
+            if (bb.active_color == .white) board = bb.bishops.white else board = bb.bishops.black;
+        },
+        .rook => {
+            moveFn = MoveGen.generate_rook_moves;
+            if (bb.active_color == .white) board = bb.rooks.white else board = bb.rooks.black;
+        },
+        .queen => {
+            moveFn = MoveGen.generate_queen_moves;
+            if (bb.active_color == .white) board = bb.queens.white else board = bb.queens.black;
+        },
+        .king => {
+            moveFn = MoveGen.generate_king_moves;
+            if (bb.active_color == .white) board = bb.kings.white else board = bb.kings.black;
+        },
+    }
+
+    while (board != 0) {
+        const src = BB.Coord2d.pop_and_get_lsb(&board);
+        var moves = try moveFn(bb, src, allocator, &all_specials);
+        validate_pseudo_move_list(bb, &moves, &all_moves, allocator) catch return MoveGen.GenerationError.AllocationFailed;
+        all_specials.clearRetainingCapacity();
+    }
+
+    return all_moves;
+}
+
+// only validates if move does not result in king being in check
+fn validate_pseudo_move_list(bb: *BB.BitBoard, list: *MoveGen.MoveList, slice: *MoveGen.MovesArray, allocator: Allocator) !void {
+    while (list.quiets != 0) {
+        const dst = BB.Coord2d.pop_and_get_lsb(&list.quiets);
+        const move: MoveGen.Move = .{
+            .dst = dst,
+            .flag = .quiet,
+            .src = list.src,
+            .piece = list.piece,
+            .undo = null,
+        };
+        // only check if king under attack
+        const king_coord = BB.Coord2d.from_msb(if (bb.active_color == .white) bb.kings.white else bb.kings.black);
+
+        if (king_coord.to_mask() & bb.attackBoard != 0) continue;
+
+        try slice.append(allocator, move);
+    }
+    while (list.captures != 0) {
+        const dst = BB.Coord2d.pop_and_get_lsb(&list.captures);
+        const move: MoveGen.Move = .{
+            .dst = dst,
+            .flag = .capture,
+            .src = list.src,
+            .piece = list.piece,
+            .undo = null,
+        };
+        // only check if king under attack
+        const king_coord = BB.Coord2d.from_msb(if (bb.active_color == .white) bb.kings.white else bb.kings.black);
+
+        if (king_coord.to_mask() & bb.attackBoard != 0) continue;
+
+        try slice.append(allocator, move);
+    }
+
+    if (list.specials == null) return;
+    for (list.specials.?.items) |special| {
+        var move: MoveGen.Move = .{
+            .dst = special.dst,
+            .flag = special.flag,
+            .src = list.src,
+            .piece = list.piece,
+            .undo = null,
+        };
+        // only check if king under attack
+        make_move(bb, &move);
+        bb.active_color.toggle();
+        defer unmake_move(bb, &move);
+
+        if (king_attacked(bb)) {
+            continue;
+        }
+
+        try slice.append(allocator, move);
+    }
+}
+
+pub fn king_attacked(bb: *const BB.BitBoard) bool {
+    const src = BB.Coord2d.from_msb(if (bb.active_color == .white) bb.kings.white else bb.kings.black);
+
+    { // limit scope of variables
+        const opp_queen = if (bb.active_color == .white) bb.queens.black else bb.queens.white;
+
+        const axis_moves = MoveGen.axis_aligned_ray_move(bb, src);
+        const opp_rooks = if (bb.active_color == .white) bb.rooks.black else bb.rooks.white;
+        if (axis_moves.captures & opp_rooks != 0 or axis_moves.captures & opp_queen != 0) {
+            std.debug.print("king attacked by rook or queen\n", .{});
+            return true;
+        }
+
+        const diagonal_moves = MoveGen.diagonal_moves(bb, src);
+        const opp_bishop = if (bb.active_color == .white) bb.bishops.black else bb.bishops.white;
+        if (diagonal_moves.captures & opp_bishop != 0 or diagonal_moves.captures & opp_queen != 0) {
+            std.debug.print("king attacked by bishop or queen\n", .{});
+            return true;
+        }
+    }
+
+    {
+        const knight_moves = MoveGen.generate_knight_moves(bb, src, null, null) catch unreachable;
+
+        const opp_knight = if (bb.active_color == .white) bb.knights.black else bb.knights.white;
+
+        if (knight_moves.captures & opp_knight != 0) {
+            std.debug.print("king attacked by knight\n", .{});
+            return true;
+        }
+    }
+
+    {
+        const king_moves = MoveGen.generate_king_moves(bb, src, null, null) catch unreachable;
+        const opp_king = if (bb.active_color == .white) bb.kings.black else bb.kings.white;
+
+        if (king_moves.captures & opp_king != 0) {
+            std.debug.print("king attacked by king\n", .{});
+            return true;
+        }
+    }
+
+    {
+        const opp_pawn = if (bb.active_color == .white) bb.pawns.black else bb.pawns.white;
+        const opp_y, const overflowed = if (bb.active_color == .white) @subWithOverflow(src.y, 1) else @addWithOverflow(src.y, 1);
+        if (overflowed == 1) return false;
+
+        if (src.x >= 1) {
+            if (BB.coord_to_mask(src.x - 1, opp_y) & opp_pawn != 0) {
+                std.debug.print("king attacked by pawn -1\n", .{});
+                return true;
+            }
+        }
+        if (src.x <= 6) {
+            if (BB.coord_to_mask(src.x + 1, opp_y) & opp_pawn != 0) {
+                std.debug.print("king attacked by pawn +1\n", .{});
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+test "king attacked" {
+    std.debug.print("Started test: king_attacked \n", .{});
+
+    var bb = try BB.BitBoard.from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+    const result1 = king_attacked(&bb);
+    std.testing.expect(result1 == false) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    bb = try BB.BitBoard.from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+
+    const result2 = king_attacked(&bb);
+    std.testing.expect(result2 == false) catch |err| {
+        bb.print_ansi_debug();
+        return err;
+    };
+
+    bb = try BB.BitBoard.from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+    bb.storeGeneral(.{ .x = 4, .y = 5 }, .{ .kind = .queen, .color = .black });
+    bb.removeGeneral(.{ .x = 4, .y = 6 });
+
+    const result3 = king_attacked(&bb);
+    std.testing.expect(result3 == true) catch |err| {
+        bb.print_ansi_debug();
+
+        return err;
+    };
+
+    std.debug.print("===Passed test: king_attacked \n", .{});
+}
+
+test "generatee piece all moves: discovered attack" {
+    std.debug.print("Started test:generate piece all moves: discovered attack \n", .{});
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer if (gpa.deinit() == .leak) @panic("memory leak");
+    const allocator = gpa.allocator();
+
+    var bb = try BB.BitBoard.from_fen("rnbqkbnr/pppppppp/8/8/B7/8/PPPPPPPP/RNBQK1NR b KQkq - 0 1");
+
+    var moves = try generate_piece_all_moves(&bb, .{ .kind = .pawn, .color = bb.active_color }, allocator);
+    const illegal_dst: BB.Coord2d = .{ .x = 3, .y = 3 };
+    for (moves.items) |m| {
+        if (m.dst.y == illegal_dst.y and m.dst.x == illegal_dst.x) {
+            try std.testing.expect(false);
+        }
+    }
+    moves.deinit(allocator);
+
+    std.debug.print("===Passed test:generate piece all moves: discovered attack \n", .{});
+}
+
+test "generate piece all moves" {
+    std.debug.print("Started test:generate piece all moves \n", .{});
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer if (gpa.deinit() == .leak) @panic("memory leak");
+    const allocator = gpa.allocator();
+
+    var bb = try BB.BitBoard.from_fen(BB.Starting_FEN);
+
+    var moves = try generate_piece_all_moves(&bb, .{ .kind = .pawn, .color = bb.active_color }, allocator);
+    std.debug.print("len moves:{d}\n", .{moves.items.len});
+    moves.deinit(allocator);
+
+    std.debug.print("===Passed test:generate piece all moves \n", .{});
 }
 
 test "pseudo_check " {
