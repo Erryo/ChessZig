@@ -694,7 +694,6 @@ pub fn generate_king_moves(bb: *const BB.BitBoard, src: BB.Coord2d, allocator: ?
             if (bb.castling_rights[BB.castle_white_queen]) {
                 const targetSquare = BB.Coord2d{ .x = 0, .y = src.y };
                 if (bb.isPieceAndOwn(targetSquare, .{ .kind = .rook, .color = bb.active_color })) {
-                    std.debug.print("passed rook presence check\n", .{});
                     const clearWay: bool = bb.isEmptyGeneral(.{ .x = 3, .y = src.y }) and
                         bb.isEmptyGeneral(.{ .x = 2, .y = src.y }) and bb.isEmptyGeneral(.{ .x = 1, .y = src.y });
 

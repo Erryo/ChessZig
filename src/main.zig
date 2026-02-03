@@ -33,6 +33,7 @@ pub fn main() !void {
     var game_manager: GameManager = .{ .bitboard = &bitboard, .stdout = writer, .allocator = allocator };
 
     //var timer = try std.time.Timer.start();
+    const player_color: chess.BB.Color = .white;
 
     var sleep_s: u64 = 0;
     var sleep_ns: u64 = 0;
@@ -53,6 +54,10 @@ pub fn main() !void {
         try writer.print("\nYour Move in UCI>>>", .{});
         try writer.flush();
 
+        if (game_manager.bitboard.active_color != player_color) {
+            try game_manager.bot_move();
+            continue;
+        }
         const input_line = reader.takeDelimiter('\n') catch |err| {
             try writer.print("the program failed to process your move because of an error:{s}\nPlease try again!\n", .{@errorName(err)});
             sleep_s = 3;
@@ -101,5 +106,14 @@ const GameManager = struct {
         }
         chess.Engine.make_move(gm.bitboard, &move);
         return true;
+    }
+
+    fn bot_move(gm: *GameManager) !void {
+        var best_move = try chess.Engine.get_best_move(gm.bitboard, &gm.allocator);
+        chess.Engine.make_move(
+            gm.bitboard,
+            &best_move.move,
+        );
+        return;
     }
 };

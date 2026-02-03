@@ -4,18 +4,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const opts = .{ .target = target, .optimize = optimize };
+    const zbench_module = b.dependency("zbench", opts).module("zbench");
+
     // Export as a module so other projects can `@import("chesszig")`
     const mod = b.addModule("ChessZig", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
+    mod.addImport("zbench", zbench_module);
 
     const exe_mod = b.addModule("chesssCli", .{
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path("src/main.zig"),
     });
+    exe_mod.addImport("zbench", zbench_module);
 
     const lib = b.addLibrary(.{
         .name = "ChessZig",
